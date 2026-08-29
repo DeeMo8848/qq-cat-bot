@@ -57,7 +57,7 @@ class TunnelManager:
         if os.name == "nt":
             creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
         self.proc = subprocess.Popen(
-            [_CFD_EXE, "tunnel", "--config", _TUNNEL_CONFIG, "run", _TUNNEL_NAME],
+            [_CFD_EXE, "tunnel", "--config", _TUNNEL_CONFIG, "--protocol", "http2", "run", _TUNNEL_NAME],
             stdout=log,
             stderr=subprocess.STDOUT,
             creationflags=creationflags,

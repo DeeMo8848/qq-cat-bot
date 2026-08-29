@@ -12,10 +12,11 @@ import os
 import re
 import time
 import json
+import random
 import hashlib
 
 from . import register, ROLE_ALL
-from bot.core import tools
+from bot.core import tools, members
 from bot.meme.meme_data import KW, META
 from config import ROOT, PYTHON
 
@@ -35,6 +36,7 @@ TUTORIAL = (
     "🐱 表情包(meme)使用教程\n"
     "· meme列表          → 列出所有可用表情包关键词喵\n"
     "· meme搜索 (名称)    → 查看某个表情包的信息喵\n"
+    "· 随机meme          → 随机出一个表情包喵\n"
     "· meme更新          → 联网更新并整理表情包喵\n"
     "· meme刷新          → 仅重新整理本地表情包喵\n"
     "· 直接发关键词       → 制作对应表情包喵\n"
@@ -42,6 +44,7 @@ TUTORIAL = (
 )
 
 _CMD = re.compile(r"^meme\s*", re.I)
+_RANDOM_CMD = re.compile(r"随机\s*meme\s*", re.I)
 _HTTP_URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 # QQ 图床链接通常没有图片扩展名，按域名/特征判断是否像图片
 _IMG_LIKE = re.compile(
@@ -82,6 +85,8 @@ def is_meme(text: str) -> bool:
 
 def _matcher(text):
     t = (text or "").strip()
+    if _RANDOM_CMD.match(t):
+        return True
     if _CMD.match(t):
         return True
     return _match_meme(t) is not None
@@ -90,6 +95,9 @@ def _matcher(text):
 @register(keywords=["meme"], help="制作各种表情包呢喵", matcher=_matcher, role=ROLE_ALL, exact=True)
 async def cmd_meme(ctx):
     text = (ctx.args or "").strip()
+    if _RANDOM_CMD.match(text):
+        await _random(ctx)
+        return
     m = _CMD.match(text)
     if m:
         rest = text[m.end():].strip()
@@ -379,6 +387,36 @@ def _resolve_texts(key: str, raw_text: str, kw: str):
     num = f"{min_t} ~ {max_t} 条" if min_t != max_t else f"{min_t} 条"
     ex = f"{kw} " + " ".join(f"文本{j + 1}" for j in range(min_t))
     return [], f"制作失败，该meme需要{num}文本喵，例如：{ex}"
+
+
+# ---------- 随机 ----------
+def _random_candidates():
+    """可安全随机的模板：图片≤1张（可用触发者头像补足），文字要么 0 条要么有默认文本。"""
+    cands = []
+    for key, meta in META.items():
+        if key not in KW.values():
+            continue  # 该模板没有可触发的关键词，无法走正常生成流程
+        if meta.get("min_images", 0) > 1:
+            continue
+        mi, ma = meta.get("min_texts", 0), meta.get("max_texts", 0)
+        if mi == 0:
+            cands.append(key)
+        elif meta.get("default_texts") and mi <= len(meta["default_texts"]) <= ma:
+            cands.append(key)
+    return cands
+
+
+async def _random(ctx):
+    cands = _random_candidates()
+    if not cands:
+        await ctx.reply_text("呜，没有能随机出的表情包喵")
+        return
+    key = random.choice(cands)
+    # 取该模板的一个中文关键词作为触发词，让默认文本 / 触发者头像自动填充
+    kw = next((k for k, v in KW.items() if v == key and _CJK.search(k)), None)
+    if not kw:
+        kw = next((k for k, v in KW.items() if v == key), "")
+    await _make(ctx, key, kw)
 
 
 # ---------- 制作 ----------

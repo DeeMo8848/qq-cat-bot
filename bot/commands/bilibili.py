@@ -15,7 +15,7 @@ import time
 
 from . import register, ROLE_ALL
 from bot.core import tools
-from config import ROOT, BBDOWN_DIR, BBDOWN_EXE
+from config import ROOT, BBDOWN_DIR, BBDOWN_EXE, FFMPEG_EXE
 
 # 下载临时目录（统一放 tmp/bili）
 _TMP_ROOT = os.path.join(ROOT, "tmp", "bili")
@@ -121,35 +121,37 @@ def _fresh_workdir():
 
 
 def _find_downloaded(workdir, exts):
-    """在目录里找指定扩展名的文件，返回第一个匹配路径或 None。"""
+    """在目录（含子目录）里找指定扩展名的文件，返回第一个匹配路径或 None。"""
     if not os.path.isdir(workdir):
         return None
-    for name in os.listdir(workdir):
-        full = os.path.join(workdir, name)
-        if os.path.isfile(full) and name.lower().endswith(exts):
-            return full
+    for root, _dirs, files in os.walk(workdir):
+        for name in files:
+            if name.lower().endswith(exts):
+                return os.path.join(root, name)
     return None
 
 
 async def _download_cover(bv, workdir):
-    await tools.run_script(f'"{BBDOWN_EXE}" {bv} --cover-only --work-dir "{workdir}"', timeout=120)
+    await tools.run_script(f'"{BBDOWN_EXE}" {bv} --cover-only --ffmpeg-path "{FFMPEG_EXE}" --work-dir "{workdir}"', timeout=120)
     return _find_downloaded(workdir, (".png", ".jpg", ".jpeg", ".webp"))
 
 
 async def _download_video(bv, workdir, low_quality=False):
+    # 关键：必须显式 --ffmpeg-path 指定完整版 ffmpeg。BBDown 1.6.3 只在同目录或 PATH 找
+    # ffmpeg，tools/BBDown/ 里没有 ffmpeg 时会落到 PATH 上 TRAE 的精简版，导致合并失败。
     if low_quality:
         # 自动解析默认低画质：480P 优先 HEVC/AV1，控制体积便于群里直接点开看
         await tools.run_script(
-            f'"{BBDOWN_EXE}" {bv} -p 1 -q "480P 清晰, 360P 流畅" -e "hevc,av1,avc" --work-dir "{workdir}"',
+            f'"{BBDOWN_EXE}" {bv} -p 1 -q "480P 清晰, 360P 流畅" -e "hevc,av1,avc" --ffmpeg-path "{FFMPEG_EXE}" --work-dir "{workdir}"',
             timeout=600,
         )
     else:
-        await tools.run_script(f'"{BBDOWN_EXE}" {bv} -p 1 --work-dir "{workdir}"', timeout=600)
+        await tools.run_script(f'"{BBDOWN_EXE}" {bv} -p 1 --ffmpeg-path "{FFMPEG_EXE}" --work-dir "{workdir}"', timeout=600)
     return _find_downloaded(workdir, (".mp4", ".mkv", ".flv", ".mov"))
 
 
 async def _download_audio(bv, workdir):
-    await tools.run_script(f'"{BBDOWN_EXE}" {bv} --audio-only --work-dir "{workdir}"', timeout=600)
+    await tools.run_script(f'"{BBDOWN_EXE}" {bv} --audio-only --ffmpeg-path "{FFMPEG_EXE}" --work-dir "{workdir}"', timeout=600)
     return _find_downloaded(workdir, (".m4a", ".mp3", ".flac", ".wav", ".aac"))
 
 
@@ -243,14 +245,18 @@ async def _run_bbdown_command(ctx, text):
         cmd = re.sub(r"^BBDown\b", lambda m: f'"{BBDOWN_EXE}"', text, flags=re.IGNORECASE)
         if "--work-dir" not in cmd:
             cmd = f'{cmd} --work-dir "{workdir}"'
+        # 显式指定完整版 ffmpeg，否则 BBDown 会用 PATH 上的精简版导致合并失败
+        if "--ffmpeg-path" not in cmd:
+            cmd = f'{cmd} --ffmpeg-path "{FFMPEG_EXE}"'
         await tools.run_script(cmd, timeout=600)
 
-        # 发送下载的文件（图片/视频/音频）
+        # 只发送最相关的一个文件（视频 > 音频 > 封面）。
+        # BBDown 即使 --video-only/--audio-only 也会默认下载封面，这里按优先级只发一个，避免多发一张图
         sent = False
         for exts, ftype in [
-            ((".png", ".jpg", ".jpeg", ".webp"), 1),
             ((".mp4", ".mkv", ".flv", ".mov"), 2),
             ((".m4a", ".mp3", ".flac", ".wav", ".aac"), 4),  # 音频以文件形式发送
+            ((".png", ".jpg", ".jpeg", ".webp"), 1),
         ]:
             path = _find_downloaded(workdir, exts)
             if path:
@@ -258,6 +264,7 @@ async def _run_bbdown_command(ctx, text):
                 if isinstance(result, str):
                     await ctx.reply_text(result)
                 sent = True
+                break
         if not sent:
             await ctx.reply_text("命令执行完成，但没有找到可发送的文件")
     finally:
