@@ -1,41 +1,38 @@
-ï»¿@echo off
+@echo off
 rem ============================================================
-rem  QQ çŒ«çŒ«æœºå™¨äººå¯åŠ¨è„šæœ¬ï¼ˆä¾¿æºç‰ˆï¼‰
+rem  QQ Ã¨Ã¨»úÆ÷ÈËÆô¶¯½Å±¾£¨±ãĞ¯°æ£©
 rem
-rem  ä¼šæŒ‰ä¼˜å…ˆçº§æŒ‘é€‰ä¸€ä¸ªâ€œèƒ½ import botpyâ€çš„ Pythonï¼š
-rem     1) settings.json çš„ PYTHONï¼ˆè‹¥é…ç½®ï¼‰
-rem     2) PATH ä¸Šçš„æ¯ä¸ª pythonï¼ˆé€ä¸ªæ¢æµ‹ botpyï¼‰
-rem     3) Windows çš„ py å¯åŠ¨å™¨
-rem     4) æœ¬æœºå·²çŸ¥çš„ TRAE è¿è¡Œæ—¶ï¼ˆå¼€å‘æœºå…œåº•ï¼‰
+rem  »á°´ÓÅÏÈ¼¶ÌôÑ¡Ò»¸ö"ÄÜ import botpy"µÄ Python£º
+rem     1) PATH ÉÏµÄÃ¿¸ö python£¨Öğ¸öÌ½²â botpy£©
+rem     2) Windows µÄ py Æô¶¯Æ÷£¨È¡ÆäÕæÊµ½âÊÍÆ÷Â·¾¶£©
+rem     3) ±¾»úÒÑÖªµÄ TRAE ÔËĞĞÊ±£¨¿ª·¢»ú¶µµ×£©
 rem
-rem  é¦–æ¬¡éƒ¨ç½²å‰å…ˆè¿è¡Œ:  install.ps1
-rem  ï¼ˆå¯åŠ¨è„šæœ¬å«æœ¬æœºè·¯å¾„ï¼Œä¸å…¥åº“ï¼›æ¢æœºå™¨å¯è‡ªè¡Œæ”¹ï¼Œæˆ–ç›´æ¥ç”¨ install åä»»é€‰ PATH ä¸Šçš„ pythonï¼‰
+rem  Ê×´Î²¿ÊğÇ°ÏÈÔËĞĞ:  install.ps1
 rem ============================================================
 setlocal enabledelayedexpansion
-chcp 65001 >nul
 cd /d "%~dp0"
 
-rem --- æœ¬æœºå·²çŸ¥èƒ½è¿è¡Œ bot çš„ Pythonï¼ˆTRAE è¿è¡Œæ—¶ï¼›å¯è‡ªè¡Œå¢åˆ ï¼‰---
+rem --- ±¾»úÒÑÖªÄÜÔËĞĞ bot µÄ Python£¨TRAE ÔËĞĞÊ±£»¿É×ÔĞĞÔöÉ¾£©---
 set "KNOWN_DEV_PY=C:\Users\DeeMo\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe"
 
 set "PY="
 
-rem 1) æ‰«æ PATH ä¸Šæ‰€æœ‰ pythonï¼Œå–ç¬¬ä¸€ä¸ªå¸¦ botpy çš„
+rem 1) É¨Ãè PATH ÉÏËùÓĞ python£¬È¡µÚÒ»¸ö´ø botpy µÄ
 for /f "delims=" %%P in ('where python 2^>nul') do (
     if not defined PY (
         "%%P" -c "import botpy" >nul 2>nul && set "PY=%%P"
     )
 )
 
-rem 2) Windows py å¯åŠ¨å™¨
+rem 2) Windows py Æô¶¯Æ÷£¨È¡ÆäÕæÊµ½âÊÍÆ÷Â·¾¶£©
 if not defined PY (
     where py >nul 2>nul
     if not errorlevel 1 (
-        py -3 -c "import botpy" >nul 2>nul && set "PY=py -3"
+        for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do set "PY=%%P"
     )
 )
 
-rem 3) æœ¬æœº TRAE è¿è¡Œæ—¶å…œåº•
+rem 3) ±¾»ú TRAE ÔËĞĞÊ±¶µµ×
 if not defined PY (
     if exist "%KNOWN_DEV_PY%" (
         "%KNOWN_DEV_PY%" -c "import botpy" >nul 2>nul && set "PY=%KNOWN_DEV_PY%"
@@ -43,15 +40,15 @@ if not defined PY (
 )
 
 if not defined PY (
-    echo [start.bat] æœªæ‰¾åˆ°è£…æœ‰ botpy çš„ Python.
-    echo è¯·å…ˆè¿è¡Œ:  install.ps1 å®‰è£…ä¾èµ–ï¼›æˆ–æŠŠæ­£ç¡®çš„è§£é‡Šå™¨è·¯å¾„å¡«è¿› settings.json çš„ "PYTHON"ã€‚
+    echo [start.bat] Î´ÕÒµ½×°ÓĞ botpy µÄ Python.
+    echo ÇëÏÈÔËĞĞ install.ps1 °²×°ÒÀÀµ£»»ò°ÑÕıÈ·µÄ½âÊÍÆ÷Â·¾¶Ìî½ø settings.json µÄ "PYTHON"¡£
     pause
     exit /b 1
 )
 
-echo ä½¿ç”¨ Python: %PY%
-%PY% -u main.py
+echo Ê¹ÓÃ Python: %PY%
+"%PY%" -u main.py
 
 echo.
-echo æœºå™¨äººå·²é€€å‡ºã€‚å…³é—­æœ¬çª—å£å³åœæ­¢ botã€‚
+echo »úÆ÷ÈËÒÑÍË³ö¡£¹Ø±Õ±¾´°¿Ú¼´Í£Ö¹ bot¡£
 pause
