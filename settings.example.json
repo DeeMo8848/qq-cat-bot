@@ -1,0 +1,16 @@
+{
+  "_comment": "把本文件复制为 settings.json 并填入真实凭据；settings.json 已被 .gitignore 忽略，不会上传。以下除必填项外均可留空。",
+  "APPID": "",
+  "SECRET": "",
+  "BOT_ADMINS": [],
+  "BOT_ASSISTANTS": [],
+  "WHITELIST_IPS": [],
+  "DRAGON_DIR": "",
+  "BBDOWN_EXE": "",
+  "FFMPEG_EXE": "",
+  "PYTHON": "",
+  "DEBUG": false,
+  "MENU_KEYWORDS": ["菜单", "帮助", "功能", "help"],
+  "WEBUI_PORT": 9090,
+  "WEBHOOK_PORT": 9091
+}

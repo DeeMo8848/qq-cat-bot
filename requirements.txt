@@ -1,0 +1,15 @@
+# 机器人运行时依赖（主进程 + 解析）。meme 子进程所需的 meme-generator 详见 install.ps1（固定 0.1.14）。
+qq-botpy==1.2.1
+aiohttp
+aiofiles
+msgspec
+tqdm
+Pillow
+pil_utils
+yt-dlp
+httpx
+curl_cffi
+beautifulsoup4
+apscheduler
+bilibili-api
+apilmoji
