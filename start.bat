@@ -4,7 +4,7 @@ rem  QQ 猫猫机器人启动脚本（便携版）
 rem
 rem  会按优先级挑选一个"能 import botpy"的 Python：
 rem     1) PATH 上的每个 python（逐个探测 botpy）
-rem     2) Windows 的 py 启动器（取其真实解释器路径）
+rem     2) Windows 的 py 启动器（取其真实解释器路径，并再探测 botpy）
 rem     3) 本机已知的 TRAE 运行时（开发机兜底）
 rem
 rem  首次部署前先运行:  install.ps1
@@ -24,11 +24,13 @@ for /f "delims=" %%P in ('where python 2^>nul') do (
     )
 )
 
-rem 2) Windows py 启动器（取其真实解释器路径）
+rem 2) Windows py 启动器：先解析真实解释器路径，再确认它带 botpy 才采用
 if not defined PY (
     where py >nul 2>nul
     if not errorlevel 1 (
-        for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do set "PY=%%P"
+        for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do (
+            "%%P" -c "import botpy" >nul 2>nul && set "PY=%%P"
+        )
     )
 )
 
