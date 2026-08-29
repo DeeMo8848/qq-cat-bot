@@ -25,29 +25,40 @@
 
 ## 🚀 快速开始（首次部署）
 
-仓库只包含 bot 本体，**不含** BBDown、ffmpeg、meme-generator 等外部工具（太大）。
-首次运行时用安装脚本自动检测、下载并放到项目内 `tools/` 与 Python 环境，无需手工准备。
+仓库只包含 bot 本体，**不含** BBDown、ffmpeg、meme-generator 等外部工具（太大），也不含龙图/批量 meme 素材。
+这些资源由两个独立的 GitHub 资源仓库承载，首次安装时由 `install.ps1` 自动拉取，无需手工准备。
+
+| 资源 | 承载仓库 | 落地位置 | 说明 |
+| --- | --- | --- | --- |
+| 🐉 龙图(随机龙) | 图库仓库 `qq-cat-image-lib` | `resources/image_lib/dragon/` | 龙图作为 `dragon/` 次级目录存放 |
+| 🎭 批量 meme 模板 | meme 聚合仓库 `qq-cat-memes` | `bot/meme/custom_memes/`（经子模块拉源仓库） | 聚合仓库引用 4 个公开源仓库 |
+| 🛠️ BBDown / ffmpeg / meme-generator | 各官方源 | `tools/` 与 Python 环境 | 首次自动下载 |
 
 ### 1. 前置要求
 
 - Windows + Python 3.10+（已加到 PATH）
-- `git`（用于拉取 meme 扩展，可选）
+- `git`（拉取图库与 meme 素材必需）
 - 一个已通过审核的 QQ 开放平台机器人（拿到 AppID / AppSecret）
+- 两个资源仓库为**私有**仓库，拉取需一个 GitHub 令牌（PAT，勾选 `repo` 权限）
 
 ### 2. 运行安装脚本
 
 在项目根目录打开 PowerShell：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -GitToken "ghp_你的令牌"
 ```
+
+> 若 `git` 已登录且对私有仓库有权限，可省略 `-GitToken`；不带令牌时图库与 meme 聚合仓库会改用公开源仓库回退拉取。
 
 脚本会自动完成：
 1. 检测 Python，安装 `requirements.txt` + `meme-generator==0.1.14`（固定版本，**勿升级到 0.2.x Rust 版**）
 2. 下载 **BBDown 1.6.3** 到 `tools/BBDown/`
 3. 下载 **ffmpeg** 到 `tools/ffmpeg/`（gyan.dev 失败自动换 BtbN）
 4. 生成 `settings.json` 配置模板
-5. 从扩展仓库拉取额外 meme 到 `bot/meme/custom_memes/`，并重建关键词数据
+5. 克隆**图库仓库**到 `resources/image_lib/`（龙图目录自动使用其 `dragon/` 子目录）
+6. 拉取 **meme 聚合仓库**（优先含子模块，失败回退直接克隆源仓库）并装载到 `bot/meme/custom_memes/`
+7. 重建 meme 关键词数据
 
 ### 3. 配置凭据
 
@@ -60,11 +71,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
   "BOT_ADMINS": ["管理员 openid"],
   "BOT_ASSISTANTS": ["协助者 openid"],
   "WHITELIST_IPS": ["开放平台 IP 白名单里已加入的公网 IP"],
-  "DRAGON_DIR": "本地龙图文件夹路径（随机龙用，留空则禁用）",
   "PYTHON": "meme/B站子进程用的 Python 路径（一般留空取 PATH）"
 }
 ```
 
+> 💡 **龙图目录无需手动填**：`config.py` 默认取 `resources/image_lib/dragon/`（由第 5 步从图库仓库拉取）。
+> 仅当你想手工换目录时才在 `settings.json` 里加 `"DRAGON_DIR": "你的龙图目录"`（这样会覆盖自动路径）。
 > ⚠️ `settings.json` 已被 `.gitignore` 忽略，**绝不会提交到仓库**。
 > 仅配置格式参考 `settings.example.json`。
 
@@ -89,12 +101,13 @@ start.bat        # 或：python -u main.py
 ```
 config.py               # 配置加载(从 settings.json) + 工具路径解析
 settings.example.json   # 配置模板（真实文件 settings.json 不入库）
-install.ps1             # 一键安装：检测/下载环境依赖
+install.ps1             # 一键安装：检测/下载环境依赖 + 拉取图库/meme 资源
 main.py                 # 入口：启动连接、监听事件、分发
 start.bat / 启动bot.bat # 启动脚本（后者含本机路径，不入库）
 requirements.txt        # Python 依赖
 命令清单.md / meme_清单.md
 tools/                  # BBDown、ffmpeg（由 install.ps1 下载，不入库）
+resources/              # 图库克隆(龙图等)，由 install.ps1 拉取，不入库
 bot/
   core/                 # 平台连接、webhook、tunnel、webui(?)、命令注册框架
   commands/             # 各功能命令（bilibili / meme / randomimg / ai 等）
@@ -110,7 +123,8 @@ bot/
 - 所有凭据集中在 `settings.json`（被 git 忽略）；仓库不携带任何密钥。
 - 本机专用启动脚本 `启动bot.bat`、运行时状态 `state.json`、日志、cloudflared 凭据
   均已在 `.gitignore` 中排除，不会上传。
-- 本地龙图目录在 `settings.json` 的 `DRAGON_DIR` 配置，不在仓库内。
+- 龙图/批量 meme 素材由 `install.ps1` 从独立的图库仓与 meme 聚合仓按需拉取，
+  不在本仓库内；`.gitignore` 已排除 `resources/` 与 `custom_memes/`（`feiyu/` 本地移植插件除外）。
 
 ---
 

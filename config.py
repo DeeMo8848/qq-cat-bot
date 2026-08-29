@@ -60,8 +60,12 @@ BOT_ASSISTANTS = _cfg("BOT_ASSISTANTS", [])
 # 已在开放平台「IP 白名单」中添加过的公网 IP（后台提示用；from settings.json）
 WHITELIST_IPS = _cfg("WHITELIST_IPS", [])
 
-# 本地龙图目录（机器相关，放 settings.json）
-DRAGON_DIR = _cfg("DRAGON_DIR", "")
+# 图库资源：由 install.ps1 从 GitHub「图库仓库」克隆到 resources/image_lib（不入库）
+IMAGE_LIB_DIR = _cfg("IMAGE_LIB_DIR", os.path.join(ROOT, "resources", "image_lib"))
+
+# 本地龙图目录：默认取图库仓库克隆后的 dragon/ 子目录（无需在 settings.json 手动填写）；
+# 也可在 settings.json 的 DRAGON_DIR 显式覆盖
+DRAGON_DIR = _cfg("DRAGON_DIR", os.path.join(IMAGE_LIB_DIR, "dragon"))
 
 
 # ---- 功能型常量（可在 settings.json 覆盖）----

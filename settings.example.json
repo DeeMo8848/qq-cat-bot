@@ -6,6 +6,7 @@
   "BOT_ASSISTANTS": [],
   "WHITELIST_IPS": [],
   "DRAGON_DIR": "",
+  "_comment_dragon": "「随机龙」目录无需填写，config 默认取 resources/image_lib/dragon（由 install.ps1 从图库仓库拉取）。仅当想手工指定时才填此路径覆盖。",
   "BBDOWN_EXE": "",
   "FFMPEG_EXE": "",
   "PYTHON": "",

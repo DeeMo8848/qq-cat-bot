@@ -29,6 +29,14 @@ tunnel/
 # 运行时下载的工具（由 install.ps1 首次自动拉取）
 tools/
 
+# 运行时从 GitHub 资源仓库克隆的素材（图库/龙图，由 install.ps1 拉取，不入库）
+resources/
+
+# 运行时从 meme 源仓库拉取的批量模板（不入库；feiyu 为本地移植插件需保留）
+bot/meme/custom_memes/*
+!bot/meme/custom_memes/feiyu/
+!bot/meme/custom_memes/feiyu/**
+
 # meme 关键字数据的备份文件
 *.bak_*
 
