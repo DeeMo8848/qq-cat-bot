@@ -237,3 +237,4 @@ from . import hello  # noqa: E402,F401
 from . import bilibili  # noqa: E402,F401
 from . import meme  # noqa: E402,F401
 from . import randomimg  # noqa: E402,F401
+from . import searchimg  # noqa: E402,F401

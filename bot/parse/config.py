@@ -108,6 +108,7 @@ class ParserConfig(ConfigNodeContainer):
     bilibili: ParserItem
     douyin: ParserItem
     kuaishou: ParserItem
+    mcmod: ParserItem
     ncm: ParserItem
     steam: ParserItem
 
@@ -143,6 +144,7 @@ _DEFAULTS = {
         {"__template_key": "douyin", "enable": True, "use_proxy": False, "cookies": ""},
         {"__template_key": "kuaishou", "enable": True, "use_proxy": False, "cookies": ""},
         {"__template_key": "acfun", "enable": True, "use_proxy": False, "cookies": ""},
+        {"__template_key": "mcmod", "enable": True, "use_proxy": False, "cookies": ""},
         {"__template_key": "ncm", "enable": True, "use_proxy": False, "cookies": ""},
         {"__template_key": "steam", "enable": True, "use_proxy": False, "cookies": ""},
     ],

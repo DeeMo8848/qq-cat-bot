@@ -154,6 +154,7 @@ _PLATFORM_NAMES = {
     "douyin": "抖音",
     "kuaishou": "快手",
     "acfun": "A站",
+    "mcmod": "MC百科",
     "ncm": "网易云",
     "steam": "Steam",
 }
