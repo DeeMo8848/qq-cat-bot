@@ -29,7 +29,12 @@ _COMMANDS = []
 
 # 最近已处理的消息 id（防止 WebSocket 与 Webhook 双通道对同一条消息重复响应）
 _RECENT_IDS = {}
-_DEDUP_WINDOW = 10
+_DEDUP_WINDOW = 20  # 秒；两通道推送消息 id 相同时，窗口内去重
+
+# 兜底：按「场景+目标+发送者+内容」指纹去重。WebSocket 与 Webhook 对同一条消息的
+# message id 偶有不一致，此时仅靠 id 去重会漏，出现「偶尔返回两次」。用内容指纹再拦一道。
+_RECENT_CONTENT = {}
+_CONTENT_DEDUP_WINDOW = 8.0
 
 # 命令权限级别
 ROLE_ALL = "all"          # 所有人可触发
@@ -136,18 +141,24 @@ def menu_text():
         "· 😛meme",
         "· 🐷每日小猪",
         "· 🖼️随机图片",
+        "· 🎮游戏娱乐",
         "· 📦️其他功能",
     ])
 
 
 async def dispatch(ctx):
-    """把收到的消息路由到对应命令函数。"""
     import re
 
-    # 防重复：同一消息 id 短时间内只处理一次（WebSocket 与 Webhook 可能同时收到同一条）
+    now = time.time()
+
+    # 先统一清洗文本（去掉 @ 前缀与 / 前缀），供去重指纹与后续命令匹配共用
+    text = (getattr(ctx.message, "content", None) or "").strip()
+    text = re.sub(r"^<@[^>]*>\s*", "", text).strip()
+    text = re.sub(r"^/\s*", "", text).strip()
+
+    # 防重复1：同一消息 id 短时间内只处理一次（WebSocket 与 Webhook 可能同时收到同一条）
     msg_id = getattr(ctx.message, "id", None)
     if msg_id:
-        now = time.time()
         if _RECENT_IDS.get(msg_id, 0) > now - _DEDUP_WINDOW:
             return
         _RECENT_IDS[msg_id] = now
@@ -155,10 +166,33 @@ async def dispatch(ctx):
             for k in [k for k, v in _RECENT_IDS.items() if now - v > _DEDUP_WINDOW]:
                 _RECENT_IDS.pop(k, None)
 
-    text = (getattr(ctx.message, "content", None) or "").strip()
-    # 统一去掉 @ 机器人前缀（形如 <@xxxx> 你好）和快捷指令的 / 前缀（形如 /你好）
-    text = re.sub(r"^<@[^>]*>\s*", "", text).strip()
-    text = re.sub(r"^/\s*", "", text).strip()
+    # 防重复2：两通道 message id 偶不一致，按「场景+目标+发送者+内容」指纹再兜底。
+    # 窗口短（8 秒），正常用户不会在如此短的时间内发送同一条命令到同一会话。
+    if text:
+        ckey = (ctx.scene, ctx.target, ctx.openid, text)
+        if _RECENT_CONTENT.get(ckey, 0) > now - _CONTENT_DEDUP_WINDOW:
+            return
+        _RECENT_CONTENT[ckey] = now
+        if len(_RECENT_CONTENT) > 200:
+            for k in [k for k, v in _RECENT_CONTENT.items() if now - v > _CONTENT_DEDUP_WINDOW]:
+                _RECENT_CONTENT.pop(k, None)
+
+    # 多轮会话：幻影坦克等需要「先发后补」的命令，在命令匹配前先拦截用户下一张图
+    try:
+        from plugins.mirage import consume as _mirage_consume
+        if await _mirage_consume(ctx):
+            return
+        from plugins.drift import consume as _drift_consume
+        if await _drift_consume(ctx):
+            return
+        from plugins.turtlesoup import consume as _turtle_consume
+        if await _turtle_consume(ctx):
+            return
+        from plugins.netease_music import consume as _ncm_consume
+        if await _ncm_consume(ctx):
+            return
+    except Exception:
+        pass
 
     # 空内容（只 @机器人 不带字）或完全匹配菜单词 -> 显示功能菜单
     if not text or text in MENU_KEYWORDS:
@@ -232,9 +266,21 @@ async def dispatch(ctx):
         await ctx.reply("没听懂哦，试试发「菜单」看我能做什么。\n" + menu_text())
 
 
-# 导入并加载所有命令模块（保证它们的 @register 被执行）
-from . import hello  # noqa: E402,F401
-from . import bilibili  # noqa: E402,F401
-from . import meme  # noqa: E402,F401
-from . import randomimg  # noqa: E402,F401
-from . import searchimg  # noqa: E402,F401
+# 导入并加载所有命令插件（各自在 plugins/<name>/ 下，保证 @register 被执行）
+from plugins import hello  # noqa: E402,F401
+from plugins import bilibili  # noqa: E402,F401
+from plugins import meme  # noqa: E402,F401
+from plugins import randomimg  # noqa: E402,F401
+from plugins import searchimg  # noqa: E402,F401
+from plugins import games  # noqa: E402,F401
+from plugins import eat  # noqa: E402,F401
+from plugins import mcskin  # noqa: E402,F401
+from plugins import mirage  # noqa: E402,F401
+from plugins import drift  # noqa: E402,F401
+from plugins import emojimix  # noqa: E402,F401
+from plugins import turtlesoup  # noqa: E402,F401
+from plugins import netease_music  # noqa: E402,F401
+from plugins import jrys  # noqa: E402,F401
+from plugins import words  # noqa: E402,F401
+from plugins import downloadimg  # noqa: E402,F401
+from plugins import fishing  # noqa: E402,F401

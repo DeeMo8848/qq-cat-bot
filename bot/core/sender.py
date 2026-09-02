@@ -32,6 +32,25 @@ class Sender:
     def __init__(self, api):
         """api 即 botpy 客户端的 self.api（BotAPI），负责真正调接口。"""
         self.api = api
+        self._reply_seqs = {}
+
+    def _reply_kwargs(self, message, reply, kwargs):
+        """reply 发送时填 msg_id，并给递增的 msg_seq。
+
+        官方接口默认 msg_seq=1，且「相同 msg_id + msg_seq 重复发送会失败」。
+        一个流程里常对同一条消息连发多条回复（如幻影坦克的「收到里图」与
+        「生成完毕」都 reply 同一张图），不加序会撞出 40054005 去重错误，
+        因此按 msg_id 各自累加序号。
+        """
+        if reply and getattr(message, "id", None):
+            mid = message.id
+            n = self._reply_seqs.get(mid, 0) + 1
+            self._reply_seqs[mid] = n
+            if len(self._reply_seqs) > 1024:
+                self._reply_seqs.clear()
+            kwargs["msg_id"] = mid
+            kwargs["msg_seq"] = n
+        return kwargs
 
     # ---------- 场景识别 ----------
     def scene_of(self, message):
@@ -80,7 +99,7 @@ class Sender:
             return None
         kwargs = {"msg_type": 0, "content": text}
         if reply:
-            kwargs["msg_id"] = message.id
+            self._reply_kwargs(message, reply, kwargs)
         return await self._send(scene, target, **kwargs)
 
     async def send_markdown(self, message, markdown: str, reply=False):
@@ -90,7 +109,7 @@ class Sender:
             return None
         kwargs = {"msg_type": 2, "content": markdown}
         if reply:
-            kwargs["msg_id"] = message.id
+            self._reply_kwargs(message, reply, kwargs)
         return await self._send(scene, target, **kwargs)
 
     async def send_media_by_url(self, message, file_type: int, url: str, reply=False):
@@ -115,7 +134,7 @@ class Sender:
 
         kwargs = {"msg_type": 7, "media": media}
         if reply:
-            kwargs["msg_id"] = message.id
+            self._reply_kwargs(message, reply, kwargs)
         return await self._send(scene, target, **kwargs)
 
     # ---------- 本地文件发送 ----------
@@ -272,7 +291,7 @@ class Sender:
         # 5. 发送富媒体消息
         msg_kwargs = {"msg_type": 7, "media": media}
         if reply:
-            msg_kwargs["msg_id"] = message.id
+            self._reply_kwargs(message, reply, msg_kwargs)
         return await self._send(scene, target, **msg_kwargs)
 
     async def _send_local_by_url(self, message, scene, target, file_type, local_path, reply, tunnel_url):
@@ -299,7 +318,7 @@ class Sender:
                 )
             kwargs = {"msg_type": 7, "media": media}
             if reply:
-                kwargs["msg_id"] = message.id
+                self._reply_kwargs(message, reply, kwargs)
             return await self._send(scene, target, **kwargs)
         finally:
             try:
@@ -328,7 +347,7 @@ class Sender:
             )
             kwargs = {"msg_type": 7, "media": media}
             if reply:
-                kwargs["msg_id"] = message.id
+                self._reply_kwargs(message, reply, kwargs)
             return await self._send(scene, target, **kwargs)
         except Exception as e:
             return f"发送失败：{e}"
@@ -360,7 +379,7 @@ class Sender:
             )
             kwargs = {"msg_type": 7, "content": text, "media": media}
             if reply:
-                kwargs["msg_id"] = message.id
+                self._reply_kwargs(message, reply, kwargs)
             return await self._send(scene, target, **kwargs)
         except Exception as e:
             return f"发送失败：{e}"

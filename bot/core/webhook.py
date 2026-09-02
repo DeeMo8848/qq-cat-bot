@@ -18,7 +18,7 @@ from aiohttp import web
 from config import SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT
 from bot import commands
 from bot.core import state
-from bot.commands.meme import is_meme as meme_is_meme
+from plugins.meme import is_meme as meme_is_meme
 from bot.core.sender import Sender
 
 _log = logging.getLogger("webhook")
@@ -125,6 +125,7 @@ class _WebhookMessage:
         self.author = d.get("author", {})
         self.mentions = d.get("mentions") or []
         self.attachments = d.get("attachments") or []
+        self.msg_elements = d.get("msg_elements") or []  # 原始元素树，供「引用图」等深度取图
         self.image_urls = _collect_urls(d)
         self.card_url = _extract_card_url(d)
         self.at_me = False  # 是否 @ 了机器人（AI 兜底触发依据），由事件类型/mentions 设置

@@ -92,6 +92,35 @@ def set_bilibili_mode(mode):
     return state["bilibili_mode"]
 
 
+# ---------- Lolicon 图片过滤开关（NSFW / 擦边，默认开） ----------
+_FILTER_KEYS = ("nsfw", "racy")
+
+
+def get_lolicon_filters():
+    """返回 Lolicon 过滤开关字典，如 {"nsfw": True, "racy": False}。"""
+    return load_state().get("lolicon_filters", {})
+
+
+def is_lolicon_filter(name):
+    """某过滤是否开启（默认开启）。name ∈ {"nsfw","racy"}。"""
+    if name not in _FILTER_KEYS:
+        return True
+    return get_lolicon_filters().get(name, True)
+
+
+def set_lolicon_filter(name, enabled):
+    """写入某过滤开关，返回规范化后的值。仅接受 nsfw/racy。"""
+    s = load_state()
+    filters = s.get("lolicon_filters")
+    if not isinstance(filters, dict):
+        filters = {}
+        s["lolicon_filters"] = filters
+    if name in _FILTER_KEYS:
+        filters[name] = bool(enabled)
+    save_state(s)
+    return bool(enabled)
+
+
 # ---------- 最近群的 openid（后台填入用） ----------
 _RECENT_GROUPS_MAX = 30
 _RECORD_WINDOW = 1800  # 同一群 30 分钟内不重复写盘

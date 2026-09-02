@@ -12,6 +12,10 @@
   "PYTHON": "",
   "DEBUG": false,
   "MENU_KEYWORDS": ["菜单", "帮助", "功能", "help"],
+  "NETEASE_COOKIE": "",
+  "_comment_netease_cookie": "可选：网易云登录后的 Cookie，用于「点歌」解锁部分 VIP/版权受限歌曲。留空则免费歌曲可点，VIP 曲会提示无权限。",
+  "JRYS_BACKGROUND": "",
+  "_comment_jrys_background": "可选：「今日运势」卡片背景。留空用内置随机背景图 API；填公网图片 URL、或本地图片路径（绝对路径）、或本地图片目录（随机挑一张）。",
   "WEBUI_PORT": 9090,
   "WEBHOOK_PORT": 9091
 }

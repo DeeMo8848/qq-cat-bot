@@ -13,7 +13,7 @@ import time
 from aiohttp import web
 
 from bot import commands
-from bot.commands import randomimg
+from plugins import randomimg
 from bot.core import state
 from bot.ai import ai as ai_mod
 from config import WEBUI_PORT, WHITELIST_IPS, ROOT
@@ -26,6 +26,62 @@ _IP_PROVIDERS = [
 ]
 
 _LOG_FILE = os.path.join(ROOT, "botpy.log")
+
+
+def _module_groups():
+    """返回 Web 后台「游戏 / 其他」两层功能树及其命令集合。
+
+    - GAME_GROUPS: [(key, 名, [命令名])]，游戏娱乐下每个插件整体一个开关
+    - GAME_CMD_NAMES: 全部游戏命令（用于隐藏与一键开关）
+    - OTHER_PLUGINS: [(key, 名, [命令名], sub)]，其他功能下每个插件整体一个开关；
+      sub 供插件内还有独立功能的嵌套开关（仅搜图），格式同 GAME_GROUPS
+    - OTHER_CMD_NAMES: 全部其他功能命令（用于隐藏与一键开关）
+    """
+    from plugins.games import GAME_CMD_NAMES, GAME_GROUPS
+    from plugins.fishing import FISHING_CMD_NAMES   # 钓鱼并入「游戏娱乐」
+    from plugins.searchimg import SEARCH_GROUPS, SEARCH_CMD_NAMES
+    from plugins.drift import DRIFT_CMD_NAMES
+    from plugins.eat import EAT_CMD_NAMES
+    from plugins.mcskin import MCSKIN_CMD_NAMES
+    from plugins.mirage import MIRAGE_CMD_NAMES
+    from plugins.emojimix import EMOJIMIX_CMD_NAMES
+    from plugins.netease_music import NCM_CMD_NAMES
+    from plugins.jrys import JRESY_CMD_NAMES
+    from plugins.words import WORD_CMD_NAMES
+
+    other_plugins = [
+        ("search_img", "搜图", SEARCH_CMD_NAMES, SEARCH_GROUPS),
+        ("drift_bottle", "漂流瓶", DRIFT_CMD_NAMES, []),
+        ("eat_food", "吃什么", EAT_CMD_NAMES, []),
+        ("mc_skin", "MC皮肤", MCSKIN_CMD_NAMES, []),
+        ("mirage", "幻影坦克", MIRAGE_CMD_NAMES, []),
+        ("emoji_mix", "emojimix", EMOJIMIX_CMD_NAMES, []),
+        ("netease_music", "网易云点歌", NCM_CMD_NAMES, []),
+        ("jrys", "今日运势签到", JRESY_CMD_NAMES, []),
+        ("random_words", "随机一言/名言/诗词", WORD_CMD_NAMES, []),
+    ]
+    other_names = {n for _, _, ns, _ in other_plugins for n in ns}
+    # 「其他功能」子菜单入口命令（cmd_other_menu）并入该模块，避免与模块卡片重复显示
+    other_names = other_names | {"cmd_other_menu"}
+    # 钓鱼插件归入「游戏娱乐」模块（在 web 层合并，避免 import 环）
+    game_groups = list(GAME_GROUPS) + [("fishing", "钓鱼", sorted(FISHING_CMD_NAMES))]
+    game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES
+    return game_groups, game_names, other_plugins, other_names
+
+
+def _plugin_switch(key, title, names, sub):
+    """构造一个插件开关（含可选嵌套子开关）。"""
+    return {
+        "name": key,
+        "title": title,
+        "help": "",
+        "enabled": any(state.is_enabled(x) for x in names),
+        "sub": [
+            {"name": k, "title": t, "help": "",
+             "enabled": any(state.is_enabled(x) for x in ns)}
+            for k, t, ns in sub
+        ],
+    }
 
 
 class WebUI:
@@ -41,6 +97,9 @@ class WebUI:
         self.app.router.add_post("/api/bilibili/mode", self.set_bilibili_mode)
         self.app.router.add_get("/api/parse/platforms", self.parse_platforms)
         self.app.router.add_post("/api/parse/platforms", self.set_parse_platform)
+        # Lolicon 过滤开关
+        self.app.router.add_get("/api/lolicon/filters", self.lolicon_filters)
+        self.app.router.add_post("/api/lolicon/filters", self.set_lolicon_filter)
         self.app.router.add_post("/api/shutdown", self.shutdown)
         # AI 对话配置
         self.app.router.add_get("/api/ai/config", self.ai_config)
@@ -68,8 +127,10 @@ class WebUI:
         ip = await self._current_ip()
         ip_ok = ip in WHITELIST_IPS
         rand_names = randomimg.RANDOMIMG_CMD_NAMES
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES) = _module_groups()
         rand_cmds = [f for f in commands._COMMANDS if f.__name__ in rand_names]
-        # 随机图片的所有子命令不单独列出，统一归到「随机图片」模块（见 commands_list 末尾）
+        # 属于各模块/插件的底层命令不留独立开关，统一归为插件的总开关
+        hidden = rand_names | GAME_CMD_NAMES | OTHER_CMD_NAMES
         commands_list = [
             {
                 "name": func.__name__,
@@ -79,7 +140,7 @@ class WebUI:
                 "group_rule": state.get_group_rule(func.__name__),
             }
             for func in commands._COMMANDS
-            if func.__name__ not in rand_names
+            if func.__name__ not in hidden
         ]
         commands_list.append({
             "name": "parse_enabled",
@@ -106,6 +167,25 @@ class WebUI:
                 for f in rand_cmds
             ],
         })
+        commands_list.append({
+            "name": "cmd_game",
+            "title": "游戏娱乐",
+            "keywords": [],
+            "help": "游戏娱乐（吉星派对 / 21点 / 海龟汤）",
+            "enabled": any(state.is_enabled(n) for n in GAME_CMD_NAMES),
+            "group_rule": None,
+            "sub": [_plugin_switch(k, t, ns, []) for k, t, ns in GAME_GROUPS],
+        })
+        # 「其他功能」插件树：每个插件一个总开关；搜图插件内含搜番/搜角色/搜出处子开关
+        commands_list.append({
+            "name": "cmd_other",
+            "title": "其他功能",
+            "keywords": [],
+            "help": "其他功能（搜图 / 漂流瓶 / 吃什么 / MC皮肤 / 幻影坦克 / emojimix / 网易云点歌 / 今日运势 / 随机文案）",
+            "enabled": any(state.is_enabled(n) for n in OTHER_CMD_NAMES),
+            "group_rule": None,
+            "sub": [_plugin_switch(k, t, ns, sub) for k, t, ns, sub in OTHER_PLUGINS],
+        })
         robot = getattr(self.bot, "robot", None)
         tunnel_url = self.tunnel.get_url() if self.tunnel else None
         tunnel_running = self.tunnel.is_running() if self.tunnel else False
@@ -122,6 +202,7 @@ class WebUI:
             "commands": commands_list,
             "recent_groups": state.get_recent_groups(),
             "bilibili_mode": state.get_bilibili_mode(),
+            "lolicon_filters": state.get_lolicon_filters(),
             "log_tail": self._log_tail(60),
         })
 
@@ -129,15 +210,39 @@ class WebUI:
         data = await request.json()
         name = data.get("name", "")
         enabled = bool(data.get("enabled"))
-        # 校验命令名存在（多平台解析 / 随机图片模块是伪命令，允许开/关）
-        known = {f.__name__ for f in commands._COMMANDS} | {"parse_enabled", "cmd_randomimg"}
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES) = _module_groups()
+        # 插件/功能组开关 key -> 该开关下所有命令名（含搜图插件的子开关）
+        group_map = {}
+        for key, _title, names, sub in OTHER_PLUGINS:
+            group_map[key] = set(names)
+            for k, _t, ns in sub:
+                group_map[k] = set(ns)
+        for key, _title, names in GAME_GROUPS:
+            group_map[key] = set(names)
+        known = (
+            {f.__name__ for f in commands._COMMANDS}
+            | {"parse_enabled", "cmd_randomimg", "cmd_game", "cmd_other"}
+            | set(group_map)
+        )
         if name not in known:
             return web.json_response({"ok": False, "msg": "命令不存在"}, status=400)
-        if name == "cmd_randomimg":
+        if name in group_map:
+            # 插件/功能组开关（如 emojimix / 21点 / 搜番）：一键开/关该插件下所有命令
+            for n in group_map[name]:
+                state.set_enabled(n, enabled)
+        elif name == "cmd_randomimg":
             # 「随机图片」模块总开关：一键开/关所有随机图子命令
             for f in commands._COMMANDS:
                 if f.__name__ in randomimg.RANDOMIMG_CMD_NAMES:
                     state.set_enabled(f.__name__, enabled)
+        elif name == "cmd_game":
+            # 「游戏娱乐」模块总开关：一键开/关所有游戏子命令
+            for n in GAME_CMD_NAMES:
+                state.set_enabled(n, enabled)
+        elif name == "cmd_other":
+            # 「其他功能」模块总开关：一键开/关其余所有功能命令
+            for n in OTHER_CMD_NAMES:
+                state.set_enabled(n, enabled)
         else:
             state.set_enabled(name, enabled)
         return web.json_response({"ok": True, "name": name, "enabled": enabled})
@@ -174,6 +279,19 @@ class WebUI:
         if not pg.set_platform_enabled(name, enabled):
             return web.json_response({"ok": False, "msg": "平台不存在"}, status=400)
         await pg.reload_platforms()
+        return web.json_response({"ok": True, "name": name, "enabled": enabled})
+
+    async def lolicon_filters(self, request):
+        """返回 Lolicon 过滤开关状态，如 {"nsfw": true, "racy": true}。"""
+        return web.json_response({"ok": True, "filters": state.get_lolicon_filters()})
+
+    async def set_lolicon_filter(self, request):
+        data = await request.json() or {}
+        name = (data.get("name") or "").strip()
+        enabled = bool(data.get("enabled"))
+        if name not in ("nsfw", "racy"):
+            return web.json_response({"ok": False, "msg": "过滤项不存在"}, status=400)
+        state.set_lolicon_filter(name, enabled)
         return web.json_response({"ok": True, "name": name, "enabled": enabled})
 
     # ---------- AI 对话配置 API ----------
@@ -429,6 +547,22 @@ PAGE_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
+function subSwitch(s){
+  return `
+  <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f8fafc;border-radius:8px;border:1px solid #eef2ff">
+    <span style="font-size:13px">${s.title}</span>
+    <label class="switch" style="width:38px;height:20px">
+      <input type="checkbox" ${s.enabled?'checked':''} onchange="toggle('${s.name}', this.checked)">
+      <span class="slider" style="height:20px"></span>
+    </label>
+  </div>`;
+}
+function pluginRow(s){
+  const inner = (s.sub && s.sub.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-left:20px;margin-top:8px">${s.sub.map(subSwitch).join('')}</div>`
+    : '';
+  return `<div style="margin-bottom:8px">${subSwitch(s)}${inner}</div>`;
+}
 async function refresh(){
   try{
     const r = await fetch('/api/status');
@@ -484,12 +618,23 @@ async function refresh(){
             <span class="slider" style="height:20px"></span>
           </label>
         </div>`).join('')}</div>
+        <div id="lolicon-filters" data-filters="${(d.lolicon_filters||{}).nsfw===false?0:1},${(d.lolicon_filters||{}).racy===false?0:1}" style="margin-top:8px"></div>
         <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关全部图源；下方小开关可单独控制每个图源</div>
+      </div>`;
+      } else if (c.name === 'cmd_game' || c.name === 'cmd_other') {
+        const subs = c.sub||[];
+        const flat = subs.filter(s => !(s.sub && s.sub.length));
+        const nested = subs.filter(s => s.sub && s.sub.length);
+        extra = `
+      <div style="padding:4px 0 10px;border-top:1px dashed #eef2ff;margin-top:2px">
+        <div style="display:flex;flex-wrap:wrap;gap:8px">${flat.map(subSwitch).join('')}</div>
+        ${nested.length ? `<div style="display:flex;flex-direction:column;gap:2px;margin-top:2px">${nested.map(pluginRow).join('')}</div>` : ''}
+        <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关整个模块；下方每个插件一个总开关，不逐条列底层命令</div>
       </div>`;
       }
       const cTitle = c.title || (c.keywords && c.keywords.length ? c.keywords.join(' / ') : c.name);
-      // 模块（随机图片）没有独立群黑白名单，不显示该行，避免误操作
-      const grpBlock = c.name === 'cmd_randomimg' ? '' : `
+      // 模块（随机图片 / 游戏娱乐 / 其他功能）没有独立群黑白名单，不显示该行，避免误操作
+      const grpBlock = (c.name === 'cmd_randomimg' || c.name === 'cmd_game' || c.name === 'cmd_other') ? '' : `
       <div class="grp">
         <select id="gr-mode-${c.name}" onchange="saveGroup('${c.name}')">
           <option value="" ${mode===''?'selected':''}>全部群</option>
@@ -519,7 +664,7 @@ async function refresh(){
       ? Object.keys(gs).map(g => `<span onclick="addRecentTo('${g}')" title="${gs[g]}">${g.slice(0,10)}…</span>`).join('')
       : '<span style="cursor:default;background:#e5e7eb;color:#666">暂无（群里有条消息后自动出现）</span>';
     document.getElementById('recent-groups').innerHTML = rc;
-    loadParsePlats(); loadBiliMode(); syncAiToggle();
+    loadParsePlats(); loadBiliMode(); syncAiToggle(); renderLoliconFilters();
     document.getElementById('log-box').textContent = d.log_tail.join('') || '(暂无日志)';
   }catch(e){
     document.getElementById('log-box').textContent = '连接后台失败: ' + e;
@@ -555,6 +700,30 @@ async function toggleParsePlat(name, enabled){
     body: JSON.stringify({name, enabled})
   })).json();
   setTimeout(loadParsePlats, 400);
+}
+function renderLoliconFilters(){
+  const box = document.getElementById('lolicon-filters');
+  if(!box) return;
+  const [nsfw, racy] = (box.getAttribute('data-filters')||'1,1').split(',').map(v=>v==='1');
+  box.innerHTML = '<div style="font-size:12px;color:#666;margin-bottom:4px">Lolicon 过滤：</div>' +
+    'nsfw|NSFW,racy|擦边'.split(',').map(kv=>{
+      const [name, label] = kv.split('|');
+      const on = (name==='nsfw')?nsfw:racy;
+      return `<div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:#fff7ed;border-radius:8px;border:1px solid #fed7aa;margin-right:8px">
+        <span style="font-size:13px">${label}</span>
+        <label class="switch" style="width:38px;height:20px">
+          <input type="checkbox" ${on?'checked':''} onchange="setLoliconFilter('${name}', this.checked)">
+          <span class="slider" style="height:20px"></span>
+        </label>
+      </div>`;
+    }).join('');
+}
+async function setLoliconFilter(name, enabled){
+  await fetch('/api/lolicon/filters', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, enabled})
+  });
 }
 async function loadBiliMode(){
   try{

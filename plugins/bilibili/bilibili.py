@@ -13,7 +13,7 @@ import re
 import shutil
 import time
 
-from . import register, ROLE_ALL
+from bot.commands import register, ROLE_ALL
 from bot.core import tools
 from config import ROOT, BBDOWN_DIR, BBDOWN_EXE, FFMPEG_EXE
 

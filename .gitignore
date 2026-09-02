@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  QQ 机器人仓库忽略清单
 #  未提交内容：机器凭据 / 本机路径 / 运行时缓存 / 日志 /
 #              内网穿透凭据 / 运行时下载的工具
@@ -16,9 +16,15 @@ cache/
 __pycache__/
 *.pyc
 *.pyo
+*.tmp
+
+# 运行时用户数据（钱包/钓鱼/签到/食物等，不入库）
+data/
+bot/data/
 
 # 日志
 *.log
+*.log.err
 botpy.log
 _run.log
 
@@ -36,6 +42,9 @@ resources/
 bot/meme/custom_memes/*
 !bot/meme/custom_memes/feiyu/
 !bot/meme/custom_memes/feiyu/**
+
+# feiyu 目录内的缓存不提交
+bot/meme/custom_memes/feiyu/__pycache__/
 
 # meme 关键字数据的备份文件
 *.bak_*

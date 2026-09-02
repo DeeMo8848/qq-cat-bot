@@ -78,6 +78,29 @@ WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 PYTHON = _cfg("PYTHON", "python")
 
 
+# ---- 「吃什么」插件功能（均可覆盖至 settings.json）----
+EAT_DEFAULT_FOODS = [
+    "黄焖鸡米饭", "麻辣烫", "兰州拉面", "沙县小吃", "重庆小面", "螺蛳粉",
+    "米线", "炒饭", "炒面", "盖浇饭", "水饺", "馄饨", "煎饼果子", "肉夹馍",
+    "烤冷面", "关东煮", "冒菜", "香锅", "炸鸡", "汉堡", "披萨", "寿司",
+    "便当", "凉皮", "凉面", "热干面", "酸辣粉", "炸酱面", "牛肉面", "叉烧饭",
+    "烧腊饭", "煲仔饭", "石锅拌饭", "部队锅", "烤肉饭", "猪脚饭", "卤肉饭",
+    "烤鸭饭", "口水鸡", "酸菜鱼", "水煮鱼", "毛血旺", "干锅", "烤鱼", "烧烤",
+    "奶茶+面包", "便利店", "泡面", "食堂自选", "轻食沙拉",
+]
+EAT_TRIGGER_KEYWORDS = _cfg("EAT_TRIGGER_KEYWORDS", ["吃什么"])   # 触发关键词列表
+EAT_SMART_CONTAINS = bool(_cfg("EAT_SMART_CONTAINS", False))     # 智能识别：关键词出现在文本任意位置即触发
+EAT_RECOMMEND_PROBABILITY = float(_cfg("EAT_RECOMMEND_PROBABILITY", 0.3))  # 推荐 vs 复读概率
+EAT_USE_BUILTIN = bool(_cfg("EAT_USE_BUILTIN", True))            # 是否启用内置食物库（可关掉只留自定义）
+EAT_BUILTIN_FOODS = _cfg("EAT_BUILTIN_FOODS", EAT_DEFAULT_FOODS)  # 内置食物库（可整体覆盖为自定义清单）
+EAT_CUSTOM_FOODS = _cfg("EAT_CUSTOM_FOODS", [])                   # 额外的自定义食物列表
+EAT_RATE_LIMIT_ENABLED = bool(_cfg("EAT_RATE_LIMIT_ENABLED", True))  # 频率限制（防多Bot循环）
+EAT_RATE_LIMIT_MAX = int(_cfg("EAT_RATE_LIMIT_MAX", 3))           # 每分钟最大响应次数
+EAT_ECHO_COOLDOWN_ENABLED = bool(_cfg("EAT_ECHO_COOLDOWN_ENABLED", True))  # 复读冷却
+EAT_ECHO_COOLDOWN_SECONDS = int(_cfg("EAT_ECHO_COOLDOWN_SECONDS", 15))      # 复读后若干秒内强制推荐
+EAT_FOOD_IMAGES_DIR = _cfg("EAT_FOOD_IMAGES_DIR", "")              # 食物配图目录：放 "{食物}.jpg" 之类即可图文同发
+
+
 # ---- 外部可执行文件解析：项目 tools/ → 旧路径 → PATH ----
 _BBDOWN_LEGACY = r"D:\略夹\BBd\BBDown.exe"
 _FFMPEG_LEGACY = r"D:\略夹\BBd\ffmpeg.exe"

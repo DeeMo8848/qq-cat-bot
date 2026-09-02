@@ -25,7 +25,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from config import ROOT
-from . import register, ROLE_ALL
+from bot.commands import register, ROLE_ALL
 
 _log = logging.getLogger("searchimg")
 
@@ -47,14 +47,36 @@ _TRACE_MOE = "https://api.trace.moe/search"
 _ANIMETRACE = "https://api.animetrace.com/v1/search"
 _SAUCENAO = "https://saucenao.com/search.php"
 
-# 「其他功能」子菜单：搜图系列 + steamid（steamid 解析程序不动，仅列条目）
+# 供 Web 后台「搜图」模块的 功能分组：每个子命令整体一个开关（主开关=搜图）。
+# 各元素：(group_key, 显示名, [命令名...])
+SEARCH_GROUPS = [
+    ("search_anime", "搜番", ["cmd_search_anime"]),
+    ("search_char", "搜角色", ["cmd_search_char"]),
+    ("search_source", "搜出处", ["cmd_search_source"]),
+]
+
+# 归属「搜图」模块的所有命令（含入口命令），用于隐藏与一键开关
+SEARCH_CMD_NAMES = {n for _, _, ns in SEARCH_GROUPS for n in ns} | {"cmd_searchimg"}
+
+# 「其他功能」子菜单：搜图系列 + steamid + 吃什么 + 皮肤 + 幻影坦克（各自程序不动，仅列条目）
 _OTHER_MENU = "\n".join([
     "📦️ 其他功能",
     "· 搜图    → 番剧+角色+出处一起搜喵",
     "· 搜番    → trace.moe 搜番剧（无命中回退出处）",
     "· 搜角色  → AnimeTrace 识动漫角色",
     "· 搜出处  → SauceNAO 找作品出处",
+    "· 吃什么  → 随机推荐（可用 添加食物/移除食物/食物列表 管理）",
+    "· 皮肤 <玩家名> → 渲染MC皮肤（支持渲染类型）",
+    "· 幻影坦克    → 黑白幻影坦克（两张图合成）",
+    "· 彩色幻影坦克 → 彩色幻影坦克（两张图合成）",
+    "· 捡瓶子    → 随机捞一个漂流瓶喵",
+    "· 投瓶子    → 投递漂流瓶（可带文字/图片）",
     "· steamid {appid} → 查询 Steam 应用信息",
+    "· emojimix 😀😂 → 合成两个 emoji 喵",
+    "· 点歌 <歌名> → 网易云点歌，回复数字选喵",
+    "· 今日运势 → 签到查看今日运势喵",
+    "· 随机一言 / 随机名言 / 随机诗词 → 随机文案喵",
+    "· 下载图片 → 引用图/表情后发送，下载原图便于保存喵",
 ])
 
 

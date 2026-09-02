@@ -15,7 +15,7 @@ import json
 import random
 import hashlib
 
-from . import register, ROLE_ALL
+from bot.commands import register, ROLE_ALL
 from bot.core import tools, members
 from bot.meme.meme_data import KW, META
 from config import ROOT, PYTHON
