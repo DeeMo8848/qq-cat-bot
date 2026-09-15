@@ -8,6 +8,7 @@ from . import gamble    # noqa: F401  赌博小游戏（骰宝/命运之轮/擦�
 from . import social    # noqa: F401  社交互动（偷鱼/电鱼/水族箱）
 from . import auto      # noqa: F401  自动钓鱼
 from . import title     # noqa: F401  自动称号
+from . import config_store  # noqa: F401  启动时应用 data/fishing/config.json 覆盖
 
 # 归属「游戏娱乐」模块的所有钓鱼命令（函数名），用于 Web 后台一键开关/隐藏
 FISHING_CMD_NAMES = {

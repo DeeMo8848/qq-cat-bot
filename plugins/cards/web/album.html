@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📖 卡牌收集册</title>
+<style>
+  :root {
+    --bg:#14100c; --panel:#221b16; --line:#3d2f24;
+    --gold:#e3b95c; --gold2:#f3d48a; --text:#ece4d6; --muted:#a99b86;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, #2a2018 0%, var(--bg) 60%);
+    color: var(--text); font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    min-height:100vh;
+  }
+  header {
+    position: sticky; top:0; z-index:20;
+    background: rgba(20,16,12,.85); backdrop-filter: blur(8px);
+    border-bottom:1px solid var(--line);
+    padding:16px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  header h1 { font-size:20px; color:var(--gold2); letter-spacing:1px; }
+  header .count { color:var(--muted); font-size:13px; }
+  header .back {
+    margin-left:auto; color:var(--muted); text-decoration:none; font-size:13px;
+    border:1px solid var(--line); padding:7px 14px; border-radius:999px; transition:all .15s;
+  }
+  header .back:hover { color:var(--gold2); border-color:var(--gold); }
+  main { max-width:1240px; margin:0 auto; padding:28px 24px 60px; }
+
+  /* 侧边信息框 */
+  .info {
+    position: fixed; right:0; top:0; bottom:0; width:300px; z-index:30;
+    background: rgba(34,27,22,.93); border-left:1px solid var(--line);
+    padding:28px 22px; transform: translateX(105%);
+    transition: transform .28s ease; box-shadow: -12px 0 40px rgba(0,0,0,.45);
+    overflow-y:auto;
+  }
+  .info.show { transform: translateX(0); }
+  .info .thumb { width:100%; border-radius:12px; border:1px solid var(--gold); margin-bottom:16px; }
+  .info h2 { color:var(--gold2); font-size:18px; margin-bottom:6px; }
+  .info .badge { display:inline-block; font-size:12px; margin-bottom:14px; border-radius:999px; padding:3px 12px; font-weight:600; }
+  .info .price { color:var(--gold2); font-size:14px; margin-bottom:12px; }
+  .info .desc { font-size:14px; line-height:1.9; color:var(--text); white-space:pre-wrap; }
+  .info .desc.empty { color:var(--muted); }
+  .info .meta { margin-top:18px; font-size:12px; color:var(--muted); line-height:2; word-break:break-all; }
+  .info .close {
+    position:absolute; top:14px; right:14px; background:none; border:1px solid var(--line);
+    color:var(--muted); border-radius:8px; padding:4px 10px; cursor:pointer; font-size:13px;
+  }
+  .info .close:hover { color:var(--gold2); border-color:var(--gold); }
+
+  /* 卡片网格 */
+  .grid {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));
+    gap:22px;
+  }
+  .card { perspective:900px; cursor:pointer; position:relative; }
+  .card .inner {
+    transform-style: preserve-3d;
+    transition: transform .18s ease-out;
+    will-change: transform;
+  }
+  .thumbwrap { position:relative; }
+  .card img {
+    width:100%; aspect-ratio:3/4; object-fit:cover;
+    border-radius:12px; border:1px solid var(--line);
+    display:block; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .card:hover img { border-color:var(--gold); box-shadow: 0 16px 44px rgba(227,185,92,.22); }
+  .card .rarity {
+    position:absolute; top:8px; left:8px; z-index:2;
+    font-size:11px; font-weight:700; border-radius:999px; padding:2px 10px; letter-spacing:1px;
+  }
+  .card .name {
+    margin-top:8px; text-align:center; font-size:13px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .card:hover .name { color:var(--gold2); }
+  .card .price { text-align:center; font-size:12px; color:#8a7a62; margin-top:2px; }
+  .empty { text-align:center; color:var(--muted); padding:80px 0; font-size:15px; }
+
+  /* 品级徽章配色 */
+  .r-cu  { background:linear-gradient(135deg,#d9a06b,#8f5a2a); color:#2b1d08; }
+  .r-yin { background:linear-gradient(135deg,#e8f0f6,#8fa3b5); color:#1d2b33; }
+  .r-jin { background:linear-gradient(135deg,#f7e3ad,#c99a3f); color:#2b1d08; }
+  .r-hong {
+    background:linear-gradient(90deg,#ff6a6a,#ff9f4d,#ffe066,#7ee787,#64c5ff,#c792ea,#ff6a9c,#ff6a6a);
+    background-size:400% 100%; animation: rainbow 3s linear infinite; color:#1a1205;
+  }
+  @keyframes rainbow { to { background-position:400% 0; } }
+
+  /* 放大弹窗 */
+  .modal {
+    position:fixed; inset:0; z-index:40; display:none;
+    background: rgba(8,6,4,.82); backdrop-filter: blur(6px);
+    align-items:center; justify-content:center; padding:30px;
+  }
+  .modal.show { display:flex; }
+  .modal .frame {
+    width:min(560px, 94vw); height:min(760px, 92vh);
+    background:#000; border-radius:16px; border:1px solid var(--gold);
+    overflow:hidden; box-shadow: 0 20px 80px rgba(0,0,0,.7); position:relative;
+  }
+  .modal iframe { width:100%; height:100%; border:0; }
+  .modal .close {
+    position:absolute; top:-14px; right:-14px; z-index:2;
+    width:36px; height:36px; border-radius:50%;
+    background:var(--gold); color:#2b1d08; border:none; font-size:16px; cursor:pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+  .modal .modalbar {
+    position:absolute; left:0; right:0; bottom:0; z-index:3;
+    display:flex; gap:10px; justify-content:center; padding:12px;
+    background: linear-gradient(transparent, rgba(8,6,4,.92));
+  }
+  .modal .modalbar a, .modal .modalbar button {
+    padding:8px 18px; border-radius:999px; cursor:pointer; font-size:13px;
+    background: rgba(34,27,22,.9); color:var(--gold2); border:1px solid var(--line);
+    transition:all .15s; text-decoration:none;
+  }
+  .modal .modalbar button:hover, .modal .modalbar a:hover { border-color:var(--gold); background:#32281c; }
+  .modal .modalbar button.on {
+    background:linear-gradient(135deg,var(--gold2),var(--gold)); color:#2b1d08; border-color:var(--gold);
+  }
+  .modal .hintbar {
+    position:absolute; left:0; right:0; bottom:52px;
+    background: linear-gradient(transparent, rgba(8,6,4,.9));
+    color:var(--muted); font-size:12px; text-align:center; padding:30px 0 12px;
+    pointer-events:none;
+  }
+  .modal .hintbar .web-tip {
+    display:block; font-size:11px; color:#b99c6a; margin-top:4px;
+    background:rgba(34,27,22,.75); border:1px dashed var(--line);
+    border-radius:8px; padding:4px 8px; margin:6px 12px 0; line-height:1.7;
+    pointer-events:auto;
+  }
+  .modal .hintbar .web-tip a {
+    color:var(--gold2); text-decoration:underline; margin:0 4px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📖 卡牌收集册</h1>
+  <span class="count" id="count"></span>
+  <a class="back" href="/market">🏪 卡牌市场 →</a>
+</header>
+<main>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none">还没有卡牌喵～ 回 QQ 引用图片发「卡牌制作 卡名」做一张吧</div>
+</main>
+
+<aside class="info" id="info">
+  <button class="close" id="infoClose">✕</button>
+  <img class="thumb" id="infoImg" alt="">
+  <h2 id="infoName"></h2>
+  <span class="badge" id="infoBadge"></span>
+  <div class="price" id="infoPrice"></div>
+  <div class="desc" id="infoDesc"></div>
+  <div class="meta" id="infoMeta"></div>
+</aside>
+
+<div class="modal" id="modal">
+  <button class="close" id="modalClose">✕</button>
+  <div class="frame">
+    <iframe id="modalFrame" src="about:blank"></iframe>
+    <div class="modalbar">
+      <button id="modalFlip" disabled>🔄 翻面</button>
+      <button id="modalSpin" disabled>🌀 自动旋转</button>
+      <a id="modalShare" href="#" target="_blank">🔗 分享</a>
+    </div>
+    <div class="hintbar">🖱️ 拖拽旋转 · 滚轮缩放 · 双击翻面
+      <span class="web-tip" id="webTip" style="display:none">📱 看不到卡牌（黑屏/空白）？QQ 内置浏览器不支持 3D 渲染，点<a id="openBrowser" href="#" target="_blank">这里用浏览器打开</a>，或复制分享链接</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const RARITY = {
+  '铜': { cls: 'r-cu',  label: '🥉 铜' },
+  '银': { cls: 'r-yin', label: '🥈 银' },
+  '金': { cls: 'r-jin', label: '🥇 金' },
+  '虹': { cls: 'r-hong',label: '🌈 虹' },
+};
+const grid = document.getElementById('grid');
+const empty = document.getElementById('empty');
+const info = document.getElementById('info');
+let allCards = [];
+let currentCard = null;
+let spinning = false;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
+}
+function badge(c) {
+  const r = RARITY[c.rarity] || RARITY['铜'];
+  return '<span class="rarity ' + r.cls + '">' + r.label + '</span>';
+}
+
+async function load() {
+  const key = location.pathname.split('/').filter(Boolean)[1] || '';
+  try {
+    const r = await fetch('/api/album/' + encodeURIComponent(key));
+    const d = await r.json();
+    if (d.ok) allCards = d.cards || [];
+  } catch (e) { allCards = []; }
+  document.getElementById('count').textContent =
+    allCards.length ? '共 ' + allCards.length + ' 张' : '';
+  grid.innerHTML = '';
+  empty.style.display = allCards.length ? 'none' : 'block';
+  allCards.forEach(c => grid.appendChild(makeCard(c)));
+}
+
+function makeCard(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+  wrap.innerHTML = '<div class="inner"><div class="thumbwrap">' + badge(c) +
+    '<img src="' + esc(c.card_png) + '" alt="" loading="lazy"></div>' +
+    '<div class="name">' + esc(c.name) + '</div>' +
+    '<div class="price">价值 ' + esc(c.price) + ' 喵币' +
+    (c.status === 'market' ? ' · 在市场中' : '') + '</div></div>';
+  const inner = wrap.querySelector('.inner');
+  wrap.addEventListener('mousemove', e => {
+    const r = wrap.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    inner.style.transform = 'rotateY(' + (px * 12).toFixed(2) + 'deg) rotateX(' + (-py * 10).toFixed(2) + 'deg) translateZ(6px)';
+  });
+  wrap.addEventListener('mouseleave', () => { inner.style.transform = ''; });
+  wrap.addEventListener('mouseenter', () => showInfo(c));
+  wrap.addEventListener('mouseleave', () => info.classList.remove('show'));
+  wrap.addEventListener('click', () => openModal(c));
+  return wrap;
+}
+
+function showInfo(c) {
+  currentCard = c;
+  document.getElementById('infoImg').src = c.card_png;
+  document.getElementById('infoName').textContent = c.name;
+  const b = RARITY[c.rarity] || RARITY['铜'];
+  const badgeEl = document.getElementById('infoBadge');
+  badgeEl.textContent = b.label;
+  badgeEl.className = 'badge ' + b.cls;
+  document.getElementById('infoPrice').textContent =
+    '价值 ' + c.price + ' 喵币' + (c.status === 'market' ? '（市场中）' : '');
+  const desc = document.getElementById('infoDesc');
+  if (c.desc) { desc.textContent = c.desc; desc.classList.remove('empty'); }
+  else { desc.textContent = '（这张卡还没有描述文字）'; desc.classList.add('empty'); }
+  document.getElementById('infoMeta').innerHTML =
+    '<b>卡牌 ID</b>　' + esc(c.cardKey) + '<br><b>类型</b>　' +
+    ({ none:'无文本型', transparent:'特殊文本型', boxed:'文本型' }[c.text_type] || c.text_type);
+  info.classList.add('show');
+}
+
+function openModal(c) {
+  currentCard = c;
+  const frame = document.getElementById('modalFrame');
+  const flipBtn = document.getElementById('modalFlip');
+  const spinBtn = document.getElementById('modalSpin');
+  spinning = false;
+  spinBtn.classList.remove('on');
+  spinBtn.textContent = '🌀 自动旋转';
+  flipBtn.disabled = true;
+  spinBtn.disabled = true;
+  frame.onload = () => {
+    flipBtn.disabled = !(frame.contentWindow && frame.contentWindow.__cardAPI);
+    spinBtn.disabled = !(frame.contentWindow && frame.contentWindow.__cardAPI);
+  };
+  const webTip = document.getElementById('webTip');
+  webTip.style.display = c.has_webcard ? 'block' : 'none';
+  document.getElementById('openBrowser').href = c.has_webcard ? c.card_html : '#';
+  document.getElementById('modalShare').href = '/card/' + c.cardKey;
+  frame.src = c.has_webcard ? c.card_html : c.card_png;
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() {
+  const frame = document.getElementById('modalFrame');
+  if (spinning && frame.contentWindow && frame.contentWindow.__cardAPI) {
+    frame.contentWindow.__cardAPI.setAutoRotate(false);
+  }
+  spinning = false;
+  document.getElementById('modal').classList.remove('show');
+  document.getElementById('modalFrame').src = 'about:blank';
+}
+
+document.getElementById('infoClose').addEventListener('click', () => info.classList.remove('show'));
+document.getElementById('modalFlip').addEventListener('click', () => {
+  const f = document.getElementById('modalFrame');
+  if (f.contentWindow && f.contentWindow.__cardAPI) f.contentWindow.__cardAPI.flipCard();
+});
+document.getElementById('modalSpin').addEventListener('click', () => {
+  const f = document.getElementById('modalFrame');
+  const btn = document.getElementById('modalSpin');
+  if (!f.contentWindow || !f.contentWindow.__cardAPI) return;
+  spinning = !spinning;
+  f.contentWindow.__cardAPI.setAutoRotate(spinning);
+  btn.classList.toggle('on', spinning);
+  btn.textContent = spinning ? '🌀 自动旋转中…' : '🌀 自动旋转';
+});
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); info.classList.remove('show'); } });
+
+load();
+</script>
+</body>
+</html>

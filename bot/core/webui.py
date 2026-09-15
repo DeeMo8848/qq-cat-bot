@@ -48,6 +48,7 @@ def _module_groups():
     from plugins.netease_music import NCM_CMD_NAMES
     from plugins.jrys import JRESY_CMD_NAMES
     from plugins.words import WORD_CMD_NAMES
+    from plugins.cards import CARD_CMD_NAMES
 
     other_plugins = [
         ("search_img", "搜图", SEARCH_CMD_NAMES, SEARCH_GROUPS),
@@ -66,7 +67,7 @@ def _module_groups():
     # 钓鱼插件归入「游戏娱乐」模块（在 web 层合并，避免 import 环）
     game_groups = list(GAME_GROUPS) + [("fishing", "钓鱼", sorted(FISHING_CMD_NAMES))]
     game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES
-    return game_groups, game_names, other_plugins, other_names
+    return game_groups, game_names, other_plugins, other_names, CARD_CMD_NAMES
 
 
 def _plugin_switch(key, title, names, sub):
@@ -109,6 +110,15 @@ class WebUI:
         self.app.router.add_get("/api/ai/balance", self.ai_balance)
         self.app.router.add_get("/api/ai/memory", self.ai_memory)
         self.app.router.add_post("/api/ai/memory/delete", self.ai_memory_delete)
+        # 管理分页 API（卡牌 / 钓鱼 / 用户数据）
+        self.app.router.add_get("/api/admin/cards", self.admin_cards)
+        self.app.router.add_post("/api/admin/cards", self.admin_cards_save)
+        self.app.router.add_get("/api/admin/fishing", self.admin_fishing)
+        self.app.router.add_post("/api/admin/fishing", self.admin_fishing_save)
+        self.app.router.add_post("/api/admin/fishing/reset", self.admin_fishing_reset)
+        self.app.router.add_get("/api/admin/users", self.admin_users)
+        self.app.router.add_post("/api/admin/users/balance", self.admin_users_balance)
+        self.app.router.add_post("/api/admin/users/reset_fishing", self.admin_users_reset_fishing)
         # 随机一图预览代理（供独立预览网页按 source 取一张图）
         self.app.router.add_get("/api/randomimg/preview", self.randomimg_preview)
         self._ip = None
@@ -127,10 +137,10 @@ class WebUI:
         ip = await self._current_ip()
         ip_ok = ip in WHITELIST_IPS
         rand_names = randomimg.RANDOMIMG_CMD_NAMES
-        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES) = _module_groups()
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES, CARD_CMD_NAMES) = _module_groups()
         rand_cmds = [f for f in commands._COMMANDS if f.__name__ in rand_names]
         # 属于各模块/插件的底层命令不留独立开关，统一归为插件的总开关
-        hidden = rand_names | GAME_CMD_NAMES | OTHER_CMD_NAMES
+        hidden = rand_names | GAME_CMD_NAMES | OTHER_CMD_NAMES | CARD_CMD_NAMES
         commands_list = [
             {
                 "name": func.__name__,
@@ -186,6 +196,16 @@ class WebUI:
             "group_rule": None,
             "sub": [_plugin_switch(k, t, ns, sub) for k, t, ns, sub in OTHER_PLUGINS],
         })
+        # 「卡牌制作」模块：总开关一键控制全部卡牌命令
+        commands_list.append({
+            "name": "cmd_cards",
+            "title": "卡牌制作",
+            "keywords": [],
+            "help": "卡牌 DIY（制作 / 收集册 / 我的卡牌 / 市场 / 素材包）",
+            "enabled": any(state.is_enabled(n) for n in CARD_CMD_NAMES),
+            "group_rule": None,
+            "sub": [],
+        })
         robot = getattr(self.bot, "robot", None)
         tunnel_url = self.tunnel.get_url() if self.tunnel else None
         tunnel_running = self.tunnel.is_running() if self.tunnel else False
@@ -210,7 +230,7 @@ class WebUI:
         data = await request.json()
         name = data.get("name", "")
         enabled = bool(data.get("enabled"))
-        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES) = _module_groups()
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES, CARD_CMD_NAMES) = _module_groups()
         # 插件/功能组开关 key -> 该开关下所有命令名（含搜图插件的子开关）
         group_map = {}
         for key, _title, names, sub in OTHER_PLUGINS:
@@ -221,7 +241,7 @@ class WebUI:
             group_map[key] = set(names)
         known = (
             {f.__name__ for f in commands._COMMANDS}
-            | {"parse_enabled", "cmd_randomimg", "cmd_game", "cmd_other"}
+            | {"parse_enabled", "cmd_randomimg", "cmd_game", "cmd_other", "cmd_cards"}
             | set(group_map)
         )
         if name not in known:
@@ -242,6 +262,10 @@ class WebUI:
         elif name == "cmd_other":
             # 「其他功能」模块总开关：一键开/关其余所有功能命令
             for n in OTHER_CMD_NAMES:
+                state.set_enabled(n, enabled)
+        elif name == "cmd_cards":
+            # 「卡牌制作」模块总开关：一键开/关全部卡牌命令
+            for n in CARD_CMD_NAMES:
                 state.set_enabled(n, enabled)
         else:
             state.set_enabled(name, enabled)
@@ -361,6 +385,169 @@ class WebUI:
         asyncio.get_event_loop().call_later(1.0, os._exit, 0)
         return web.json_response({"ok": True, "msg": "正在关闭机器人…"})
 
+    # ---------- 管理分页：卡牌 ----------
+    async def admin_cards(self, request):
+        from plugins.cards import commands as ccmd
+        from plugins.cards import carddata as ccd
+        from plugins.cards import forge
+        cats = {}
+        for cn, (key, _name) in ccmd.MATERIAL_CATS.items():
+            if key == "glow":
+                cats[key] = {"cn": cn, "count": len(forge.GLOW_BUILTINS)}
+            else:
+                cats[key] = {"cn": cn, "count": len(forge.list_materials(key))}
+        return web.json_response({
+            "ok": True,
+            "make_cost": ccmd._make_cost(),
+            "use_fee": ccmd._use_fee(),
+            "cooldown": ccmd._cooldown_min(),
+            "material_prices": ccmd._prices(),
+            "tax": ccmd._tax(),
+            "rarity_ranges": {k: list(v) for k, v in ccd._rarity_ranges().items()},
+            "materials": cats,
+        })
+
+    async def admin_cards_save(self, request):
+        data = await request.json() or {}
+        fp = os.path.join(ROOT, "settings.json")
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                s = json.load(f) or {}
+        except Exception:
+            s = {}
+        if "make_cost" in data:
+            s["CARD_MAKE_COST"] = int(data["make_cost"])
+        if "use_fee" in data:
+            s["CARD_MATERIAL_USE_FEE"] = max(0, int(data["use_fee"]))
+        if "cooldown" in data:
+            s["CARD_MAKE_COOLDOWN"] = max(0, int(data["cooldown"]))
+        if "material_prices" in data:
+            s["CARD_MATERIAL_PRICES"] = {
+                k: int(v) for k, v in (data["material_prices"] or {}).items()}
+        if "tax" in data:
+            s["CARD_MARKET_TAX"] = float(data["tax"])
+        if "rarity_ranges" in data:
+            s["CARD_RARITY_RANGES"] = {
+                k: [int(v[0]), int(v[1])] for k, v in (data["rarity_ranges"] or {}).items()}
+        tmp = fp + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(s, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, fp)
+        return web.json_response({"ok": True})
+
+    # ---------- 管理分页：钓鱼 ----------
+    async def admin_fishing(self, request):
+        from plugins.fishing import config_store
+        return web.json_response({"ok": True, "config": config_store.get_effective()})
+
+    async def admin_fishing_save(self, request):
+        from plugins.fishing import config_store
+        data = await request.json() or {}
+        section = (data.get("section") or "").strip()
+        if not section or "data" not in data:
+            return web.json_response({"ok": False, "msg": "参数不完整"}, status=400)
+        if not config_store.save(section, data["data"]):
+            return web.json_response({"ok": False, "msg": f"分区 {section} 不存在"}, status=400)
+        return web.json_response({"ok": True})
+
+    async def admin_fishing_reset(self, request):
+        from plugins.fishing import config_store
+        data = await request.json() or {}
+        section = (data.get("section") or "").strip()
+        if not section or not config_store.reset(section):
+            return web.json_response({"ok": False, "msg": f"分区 {section} 不存在"}, status=400)
+        return web.json_response({"ok": True})
+
+    # ---------- 管理分页：用户数据 ----------
+    async def admin_users(self, request):
+        from bot.core import wallet
+        balances = wallet.all_balances()
+        fwhole = {}
+        fp = os.path.join(ROOT, "data", "fishing", "fishing_data.json")
+        if os.path.exists(fp):
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    fwhole = json.load(f) or {}
+            except Exception:
+                fwhole = {}
+        fusers = fwhole.get("users") or {}
+        exch = fwhole.get("exchange", {}).get("holdings") or {}
+        cwhole = {}
+        cp = os.path.join(ROOT, "data", "cards", "data.json")
+        if os.path.exists(cp):
+            try:
+                with open(cp, "r", encoding="utf-8") as f:
+                    cwhole = json.load(f) or {}
+            except Exception:
+                cwhole = {}
+        albums = cwhole.get("albums") or {}
+        cards = cwhole.get("cards") or {}
+        materials = cwhole.get("materials") or {}
+
+        openids = set(balances) | set(fusers) | set(albums)
+        out = []
+        for oid in openids:
+            u = fusers.get(oid) or {}
+            inv = u.get("inventory") or {}
+            codex = u.get("codex") or {}
+            stats = u.get("stats") or {}
+            my_cards = [c for c in cards.values()
+                        if c.get("owner") == oid and c.get("status") in ("owned", "market")]
+            my_mats = materials.get(oid) or {}
+            hold = exch.get(oid) or {}
+            out.append({
+                "openid": oid,
+                "balance": balances.get(oid, 0),
+                "nick": albums.get(oid, {}).get("nick", ""),
+                "fishing": {
+                    "rod": u.get("rod", 1), "hook": u.get("hook", 1),
+                    "line": u.get("line", 1), "float": u.get("float", 1),
+                    "baits": u.get("baits", {}),
+                    "inventory_count": sum(len(w) for w in inv.values()),
+                    "codex_count": len(codex),
+                    "catches": stats.get("catches", 0),
+                    "sold_earn": stats.get("sold_earn", 0),
+                    "gacha": stats.get("gacha", 0),
+                    "ach_count": len(u.get("achievements") or []),
+                    "auto_fish": bool(u.get("auto_fish")),
+                    "last_fish": u.get("last_fish", 0),
+                },
+                "cards": {
+                    "count": len(my_cards),
+                    "market": sum(1 for c in my_cards if c.get("status") == "market"),
+                    "materials": sum(len(v) for v in my_mats.values()),
+                },
+                "exchange": {"qty": sum(r.get("qty", 0) for r in hold.values()),
+                             "kinds": len(hold)},
+            })
+        out.sort(key=lambda x: -x["balance"])
+        return web.json_response({"ok": True, "users": out})
+
+    async def admin_users_balance(self, request):
+        from bot.core import wallet
+        data = await request.json() or {}
+        oid = (data.get("openid") or "").strip()
+        if not oid:
+            return web.json_response({"ok": False, "msg": "缺少 openid"}, status=400)
+        try:
+            bal = wallet.set_balance(oid, int(data.get("balance", 0)))
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "msg": "金额格式错误"}, status=400)
+        return web.json_response({"ok": True, "balance": bal})
+
+    async def admin_users_reset_fishing(self, request):
+        from plugins.fishing import core as fcore
+        data = await request.json() or {}
+        oid = (data.get("openid") or "").strip()
+        if not oid:
+            return web.json_response({"ok": False, "msg": "缺少 openid"}, status=400)
+        with fcore._lock:
+            fdata = fcore._load()
+            if oid in fdata.get("users", {}):
+                del fdata["users"][oid]
+            fcore._save(fdata)
+        return web.json_response({"ok": True})
+
     # ---------- 内部工具 ----------
     async def _current_ip(self):
         """获取当前公网出口 IP（带 60 秒缓存）。"""
@@ -431,10 +618,40 @@ PAGE_HTML = """<!DOCTYPE html>
   .grp button { padding:5px 12px; border:none; border-radius:6px; background:#22c55e; color:#fff; font-size:12px; cursor:pointer; }
   .recent { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .recent span { background:#eef2ff; color:#4338ca; padding:3px 10px; border-radius:20px; font-size:11px; cursor:pointer; }
+  /* ---- 管理分页 ---- */
+  .tabs { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .tab { padding:8px 18px; border:none; border-radius:10px; background:#e2e8f0; color:#475569; font-size:14px; cursor:pointer; }
+  .tab.active { background:#2563eb; color:#fff; font-weight:700; }
+  .ad-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; }
+  .ad-grid label { display:block; font-size:12px; color:#666; margin-bottom:4px; }
+  .ad-grid input, .ad-grid select { width:100%; padding:6px 8px; border-radius:6px; border:1px solid #d1d5db; font-size:13px; background:#fff; }
+  .ad-btns { display:flex; gap:10px; align-items:center; margin-top:12px; }
+  .ad-btns button { padding:7px 16px; border:none; border-radius:8px; background:#22c55e; color:#fff; font-size:13px; cursor:pointer; }
+  .ad-btns .rst { background:#f59e0b; }
+  .ad-btns .del { background:#ef4444; }
+  .fb { font-size:12px; color:#888; }
+  table.ad-tb { width:100%; border-collapse:collapse; font-size:13px; }
+  table.ad-tb th { background:#f1f5f9; text-align:left; padding:7px 8px; font-size:12px; color:#555; }
+  table.ad-tb td { padding:5px 6px; border-bottom:1px solid #f1f1f1; }
+  table.ad-tb input, table.ad-tb select { padding:4px 6px; border-radius:5px; border:1px solid #d1d5db; font-size:12px; width:100%; background:#fff; }
+  table.ad-tb input.ad-id { background:#f8fafc; color:#64748b; font-family:Consolas,monospace; font-size:11px; }
+  .ad-scroll { max-height:520px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; }
+  .ad-note { font-size:12px; color:#888; margin-top:6px; }
+  .usr-card { background:#f8fafc; border:1px solid #eef2ff; border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+  .usr-head { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+  .usr-meta { font-size:12px; color:#64748b; margin-top:4px; }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="tabs">
+    <button class="tab active" data-tab="overview" onclick="showTab('overview')">📋 概览</button>
+    <button class="tab" data-tab="cards" onclick="showTab('cards')">🃏 卡牌管理</button>
+    <button class="tab" data-tab="fishing" onclick="showTab('fishing')">🐟 钓鱼管理</button>
+    <button class="tab" data-tab="users" onclick="showTab('users')">👥 用户数据</button>
+  </div>
+</div>
+<div class="wrap tab-panel" id="tab-overview">
   <h1>🤖 QQ 机器人后台</h1>
   <div class="sub">本地管理面板 · 自动刷新</div>
 
@@ -503,7 +720,7 @@ PAGE_HTML = """<!DOCTYPE html>
       <div>
         <div class="help">模型 Model</div>
         <div style="display:flex;gap:6px">
-          <input type="text" id="ai-model" placeholder="deepseek-chat" style="flex:1;padding:6px;border-radius:6px;border:1px solid #d1d5db">
+          <input type="text" id="ai-model" placeholder="deepseek-flash" style="flex:1;padding:6px;border-radius:6px;border:1px solid #d1d5db">
           <button onclick="fetchAiModels()" style="background:#6366f1;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer">获取模型</button>
         </div>
         <select id="ai-model-list" style="width:100%;margin-top:6px;padding:5px;border-radius:6px;border:1px solid #d1d5db" onchange="document.getElementById('ai-model').value=this.value"></select>
@@ -544,6 +761,144 @@ PAGE_HTML = """<!DOCTYPE html>
     </div>
     <button id="shutdown-btn" onclick="doShutdown()" style="background:#ef4444;color:#fff;border:none;padding:10px 22px;border-radius:8px;font-size:14px;cursor:pointer">关闭机器人</button>
   </div>
+</div>
+
+<!-- ================= 卡牌管理 ================= -->
+<div class="wrap tab-panel" id="tab-cards" style="display:none">
+  <h1>🃏 卡牌制作 · 后台管理</h1>
+  <div class="sub">保存后立即生效，无需重启机器人</div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>💰 基础费用</h2>
+    <div class="ad-grid">
+      <div>
+        <label>制作费（喵币/次）</label>
+        <input type="number" id="card-make-cost" min="0" step="10">
+      </div>
+      <div>
+        <label>素材使用费（喵币/个，0=不加收）</label>
+        <input type="number" id="card-use-fee" min="0" step="10">
+      </div>
+      <div>
+        <label>制作冷却（分钟，0=关闭）</label>
+        <input type="number" id="card-cooldown" min="0" step="5">
+      </div>
+      <div>
+        <label>市场交易税（0.1 = 10%）</label>
+        <input type="number" id="card-tax" min="0" max="0.9" step="0.01">
+      </div>
+    </div>
+    <div class="ad-btns">
+      <button onclick="saveCardsBase()">保存基础费用</button>
+      <span class="fb" id="card-base-fb"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🎨 素材包价格（喵币/个，购买后永久使用）</h2>
+    <div class="ad-grid" id="card-material-prices">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveCardsMaterials()">保存素材价格</button>
+      <span class="fb" id="card-mat-fb"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🏷️ 品级价格区间（AI 判定品级后随机出价）</h2>
+    <div class="ad-grid" id="card-rarity-ranges">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveCardsRarity()">保存品级区间</button>
+      <span class="fb" id="card-rarity-fb"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📦 素材一览（数量统计）</h2>
+    <div id="card-materials-info">加载中…</div>
+  </div>
+</div>
+
+<!-- ================= 钓鱼管理 ================= -->
+<div class="wrap tab-panel" id="tab-fishing" style="display:none">
+  <h1>🐟 钓鱼系统 · 后台管理</h1>
+  <div class="sub">保存后立即生效；各分区「恢复默认」可回到代码原始设定</div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>💹 经济参数</h2>
+    <div class="ad-grid" id="fish-economy">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveFishSection('economy')">保存经济参数</button>
+      <button class="rst" data-sec="economy" onclick="resetFishSection('economy')">恢复默认</button>
+      <span class="fb" id="fb-economy"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🎣 商店装备（钓竿 / 鱼钩 / 鱼线 / 鱼漂 / 鱼饵）</h2>
+    <div id="fish-gears">加载中…</div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🐟 鱼种表（共 <span id="fish-count">0</span> 种）
+      <span style="font-size:12px;color:#888;font-weight:400">｜搜索 <input id="fish-search" placeholder="名称/ID" style="width:130px;padding:4px 8px;border-radius:6px;border:1px solid #d1d5db;font-size:12px" oninput="renderFishTable()"> 稀有度 <select id="fish-rarity-filter" onchange="renderFishTable()" style="padding:4px 8px;border-radius:6px;border:1px solid #d1d5db;font-size:12px"><option value="">全部</option></select></span>
+    </h2>
+    <div class="ad-scroll" id="fish-table-wrap">加载中…</div>
+    <div class="ad-btns" style="margin-top:10px">
+      <button onclick="addFishRow()">➕ 新增鱼种</button>
+      <button onclick="saveFishSection('fish')">保存鱼种表</button>
+      <button class="rst" data-sec="fish" onclick="resetFishSection('fish')">恢复默认</button>
+      <span class="fb" id="fb-fish"></span>
+    </div>
+    <div class="ad-note">ID 为英文唯一标识（新鱼请填新 ID）；名称/图标/稀有度/基础价/重量区间(克)/时段可直接改；改 ID 后点其他输入框生效。删除点行尾 🗑，保存后才真正生效。</div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🎰 扭蛋概率（各稀有度权重）</h2>
+    <div class="ad-grid" id="fish-gacha">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveFishSection('gacha')">保存扭蛋概率</button>
+      <button class="rst" data-sec="gacha" onclick="resetFishSection('gacha')">恢复默认</button>
+      <span class="fb" id="fb-gacha"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>📈 交易所商品（名称 / 基础价 / 保质期天）</h2>
+    <div class="ad-scroll" id="fish-exchange">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="exAdd()">➕ 新增商品</button>
+      <button onclick="saveFishSection('exchange')">保存交易所</button>
+      <button class="rst" data-sec="exchange" onclick="resetFishSection('exchange')">恢复默认</button>
+      <span class="fb" id="fb-exchange"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>🐱 社交互动（偷鱼 / 电鱼 / 水族箱）与 🎣 自动钓鱼</h2>
+    <div class="ad-grid" id="fish-social-auto">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveFishSocialAuto()">保存社交/自动</button>
+      <button class="rst" data-sec="social" onclick="resetFishSocialAuto()">恢复默认</button>
+      <span class="fb" id="fb-socialauto"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🎲 赌场参数（骰宝 / 命运之轮 / 擦弹）</h2>
+    <div id="fish-gamble">加载中…</div>
+    <div class="ad-btns">
+      <button onclick="saveFishGamble()">保存赌场参数</button>
+      <button class="rst" data-sec="gamble" onclick="resetFishSection('gamble')">恢复默认</button>
+      <span class="fb" id="fb-gamble"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 用户数据 ================= -->
+<div class="wrap tab-panel" id="tab-users" style="display:none">
+  <h1>👥 用户数据 · 后台管理</h1>
+  <div class="sub">喵喵币余额可改；「重置钓鱼数据」清空该用户的钓鱼进度（鱼获/图鉴/装备，不可恢复，谨慎使用）</div>
+  <div id="users-list">加载中…</div>
 </div>
 
 <script>
@@ -631,10 +986,15 @@ async function refresh(){
         ${nested.length ? `<div style="display:flex;flex-direction:column;gap:2px;margin-top:2px">${nested.map(pluginRow).join('')}</div>` : ''}
         <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关整个模块；下方每个插件一个总开关，不逐条列底层命令</div>
       </div>`;
+      } else if (c.name === 'cmd_cards') {
+        extra = `
+      <div style="padding:4px 0 10px;border-top:1px dashed #eef2ff;margin-top:2px">
+        <div style="font-size:11px;color:#999">总开关一键开/关全部卡牌命令（制作 / 收集册 / 我的卡牌 / 销毁 / 市场 / 上架 / 下架 / 购买 / 素材包 / 购买素材）</div>
+      </div>`;
       }
       const cTitle = c.title || (c.keywords && c.keywords.length ? c.keywords.join(' / ') : c.name);
-      // 模块（随机图片 / 游戏娱乐 / 其他功能）没有独立群黑白名单，不显示该行，避免误操作
-      const grpBlock = (c.name === 'cmd_randomimg' || c.name === 'cmd_game' || c.name === 'cmd_other') ? '' : `
+      // 模块（随机图片 / 游戏娱乐 / 其他功能 / 卡牌制作）没有独立群黑白名单，不显示该行，避免误操作
+      const grpBlock = (c.name === 'cmd_randomimg' || c.name === 'cmd_game' || c.name === 'cmd_other' || c.name === 'cmd_cards') ? '' : `
       <div class="grp">
         <select id="gr-mode-${c.name}" onchange="saveGroup('${c.name}')">
           <option value="" ${mode===''?'selected':''}>全部群</option>
@@ -882,9 +1242,521 @@ function delMem(oid){
   fetch('/api/ai/memory/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({openid:oid})}).then(()=>loadMem());
 }
 function escapeHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// ================= 管理分页：卡牌 / 钓鱼 / 用户数据 =================
+const RARITY_CN = {common:'常见', fine:'优良', rare:'稀有', epic:'史诗', legend:'传说'};
+const MAT_CN = {background:'背景', frame:'边框', seal:'卡封', back:'牌背', glow:'边框特效'};
+const nz = v => (v===undefined||v===null ? '' : v);
+const num0 = v => (v===undefined||v===null ? 0 : v);
+let _tabLoaded = {};
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>{ p.style.display = (p.id==='tab-'+name)?'':'none'; });
+  if(!_tabLoaded[name]){
+    _tabLoaded[name] = true;
+    if(name==='cards') loadCardsAdmin();
+    else if(name==='fishing') loadFishingAdmin();
+    else if(name==='users') loadUsers();
+  }
+}
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+  return r.json();
+}
+function fb(id, txt, ok){
+  const el = document.getElementById(id);
+  if(el) el.textContent = (ok===false?'✗ ':'✓ ') + txt;
+}
+function fmtBonus(d){
+  return Object.entries(d||{}).map(([k,v])=>k+':'+v).join(' ');
+}
+function parseBonus(s){
+  const out = {};
+  String(s||'').split(/[,，\s]+/).forEach(t=>{
+    const [k,v] = t.split(':');
+    if(k && v!==undefined && !isNaN(parseFloat(v))) out[k.trim()] = parseFloat(v);
+  });
+  return out;
+}
+
+// ---------- 卡牌管理 ----------
+async function loadCardsAdmin(){
+  try{
+    const d = await (await fetch('/api/admin/cards')).json();
+    document.getElementById('card-make-cost').value = d.make_cost;
+    document.getElementById('card-use-fee').value = d.use_fee;
+    document.getElementById('card-cooldown').value = d.cooldown;
+    document.getElementById('card-tax').value = d.tax;
+    const mp = d.material_prices || {};
+    document.getElementById('card-material-prices').innerHTML =
+      Object.keys(MAT_CN).map(k=>`
+        <div><label>${MAT_CN[k]}（喵币/个）</label>
+        <input type="number" id="mat-${k}" min="0" step="10" value="${num0(mp[k])}"></div>`).join('');
+    const rr = d.rarity_ranges || {};
+    document.getElementById('card-rarity-ranges').innerHTML =
+      Object.keys(rr).map(r=>`
+        <div><label>${r} 品级价格区间（最低 ~ 最高）</label>
+        <div style="display:flex;gap:6px">
+          <input type="number" id="rr-${r}-min" min="0" step="50" value="${rr[r][0]}">
+          <input type="number" id="rr-${r}-max" min="0" step="50" value="${rr[r][1]}">
+        </div></div>`).join('');
+    const mats = d.materials || {};
+    document.getElementById('card-materials-info').innerHTML =
+      '<div class="ad-grid">' + Object.keys(mats).map(k=>{
+        const m = mats[k];
+        return `<div><label>${m.cn}</label><div style="font-size:18px;font-weight:700;color:#2563eb">${m.count} 种</div></div>`;
+      }).join('') + '</div>';
+  }catch(e){
+    document.getElementById('card-materials-info').textContent = '加载失败: ' + e;
+  }
+}
+async function saveCardsBase(){
+  try{
+    const d = await post('/api/admin/cards', {
+      make_cost: parseInt(document.getElementById('card-make-cost').value)||0,
+      use_fee: parseInt(document.getElementById('card-use-fee').value)||0,
+      cooldown: parseInt(document.getElementById('card-cooldown').value)||0,
+      tax: parseFloat(document.getElementById('card-tax').value)||0
+    });
+    fb('card-base-fb', d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok) loadCardsAdmin();
+  }catch(e){ fb('card-base-fb', e.message, false); }
+}
+async function saveCardsMaterials(){
+  const prices = {};
+  Object.keys(MAT_CN).forEach(k=>prices[k] = parseInt(document.getElementById('mat-'+k).value)||0);
+  try{
+    const d = await post('/api/admin/cards', {material_prices: prices});
+    fb('card-mat-fb', d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok) loadCardsAdmin();
+  }catch(e){ fb('card-mat-fb', e.message, false); }
+}
+async function saveCardsRarity(){
+  const ranges = {};
+  document.querySelectorAll('#card-rarity-ranges [id^="rr-"]').forEach(inp=>{
+    const m = inp.id.match(/^rr-(.+)-(min|max)$/);
+    if(!m) return;
+    ranges[m[1]] = ranges[m[1]] || [];
+    ranges[m[1]][m[2]==='min'?0:1] = parseInt(inp.value)||0;
+  });
+  try{
+    const d = await post('/api/admin/cards', {rarity_ranges: ranges});
+    fb('card-rarity-fb', d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok) loadCardsAdmin();
+  }catch(e){ fb('card-rarity-fb', e.message, false); }
+}
+
+// ---------- 钓鱼管理 ----------
+let _fishCfg = null, _fishData = {}, _exData = {}, _gearData = {}, _gamData = null;
+const ECON_FIELDS = [
+  ['rod_cd','抛竿冷却（秒）'], ['gacha_cost','扭蛋单抽费用'], ['jackpot_reward','集齐全部鱼种大奖'],
+  ['enchant_cost','附魔费用'], ['unenchant_cost','洗附魔费用'],
+  ['market_tax','鱼市税率（0.1=10%）'], ['exchange_tax','交易所税率（0.05=5%）'],
+  ['exchange_limit','交易所持仓上限（份）'], ['redpack_min','红包最低金额'], ['redpack_max_count','红包最多份数'],
+];
+const SOC_FIELDS = [
+  ['steal_cooldown','偷鱼冷却（秒）'], ['steal_rate','偷鱼成功率（0.35=35%）'],
+  ['electric_cost','电鱼电费'], ['electric_rate','电鱼成功率（0.65）'],
+  ['electric_fine','电鱼失败罚款'], ['electric_cooldown','电鱼冷却（秒）'],
+  ['aquarium_limit','水族箱容量上限'],
+];
+const AUTO_FIELDS = [
+  ['interval','自动钓鱼间隔（秒）'], ['cost','自动钓鱼启动费'], ['max_hours','自动钓鱼最大时长（小时）'],
+];
+const GEAR_CFG = [
+  {sec:'rods',   cn:'🎣 钓竿', keyL:'等级', keyIsLv:true,  num:[['price','价格']],                       dict:[],                  note:''},
+  {sec:'hooks',  cn:'🪝 鱼钩', keyL:'等级', keyIsLv:true,  num:[['price','价格']],                       dict:[['bonus','稀有度加成']], note:'加成格式：rare:0.02 epic:0.02'},
+  {sec:'lines',  cn:'🧵 鱼线', keyL:'等级', keyIsLv:true,  num:[['price','价格'],['mult','重量倍率']],   dict:[],                  note:''},
+  {sec:'floats', cn:'🎈 鱼漂', keyL:'等级', keyIsLv:true,  num:[['price','价格'],['bonus','上钩率加成']], dict:[],                  note:''},
+  {sec:'baits',  cn:'🪱 鱼饵', keyL:'ID',   keyIsLv:false, num:[['price','单价']],                       dict:[['bonus','稀有度加成']], note:'ID 如 bait1/bait2；加成格式：rare:0.02 epic:0.02'},
+];
+async function loadFishingAdmin(){
+  try{
+    const d = await (await fetch('/api/admin/fishing')).json();
+    _fishCfg = d.config;
+    _fishData = {}; _exData = {}; _gearData = {}; _gamData = null;
+    renderEconomy(); renderGears(); renderFishTable(); renderGacha(); renderExchange(); renderSocialAuto(); renderGamble();
+    document.getElementById('fish-count').textContent = Object.keys(_fishCfg.fish||{}).length;
+    const ov = _fishCfg.overridden || [];
+    document.querySelectorAll('.ad-btns .rst[data-sec]').forEach(b=>{
+      const sec = b.getAttribute('data-sec');
+      b.textContent = (sec && ov.includes(sec)) ? '恢复默认（已自定义）' : '恢复默认';
+    });
+  }catch(e){ document.getElementById('fish-economy').textContent = '加载失败: ' + e; }
+}
+function renderEconomy(){
+  const e = _fishCfg.economy || {};
+  document.getElementById('fish-economy').innerHTML =
+    ECON_FIELDS.map(([k,cn])=>`
+      <div><label>${cn}</label>
+      <input type="number" step="any" id="econ-${k}" value="${nz(e[k])}"></div>`).join('');
+}
+function renderGears(){
+  GEAR_CFG.forEach(g=>{ _gearData[g.sec] = JSON.parse(JSON.stringify(_fishCfg[g.sec]||{})); });
+  document.getElementById('fish-gears').innerHTML = GEAR_CFG.map(g=>{
+    const rows = Object.keys(_gearData[g.sec]).map(k=>gearRow(g,k));
+    return `<div style="margin-bottom:14px;border:1px solid #e2e8f0;border-radius:10px;padding:10px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px">${g.cn}</div>
+      <table class="ad-tb"><thead><tr><th>${g.keyL}</th><th>名称</th>
+        ${g.num.map(f=>`<th>${f[1]}</th>`).join('')}
+        ${g.dict.map(f=>`<th>${f[1]}</th>`).join('')}<th></th></tr></thead><tbody>
+        ${rows.join('')}
+      </tbody></table>
+      ${g.note?`<div class="ad-note">${g.note}</div>`:''}
+      <div class="ad-btns" style="margin-top:8px">
+        <button onclick="gearAdd('${g.sec}')">➕ 新增</button>
+        <button onclick="saveFishGears('${g.sec}')">保存</button>
+        <button class="rst" data-sec="${g.sec}" onclick="resetFishSection('${g.sec}')">恢复默认</button>
+        <span class="fb" id="fb-${g.sec}"></span>
+      </div></div>`;
+  }).join('');
+  const ov = (_fishCfg.overridden||[]);
+  document.querySelectorAll('#fish-gears .rst[data-sec]').forEach(b=>{
+    b.textContent = ov.includes(b.getAttribute('data-sec')) ? '恢复默认（已自定义）' : '恢复默认';
+  });
+}
+function gearRow(g,k){
+  const rec = _gearData[g.sec][k];
+  const fmt = fk => {
+    const v = rec[fk];
+    if(g.dict.some(x=>x[0]===fk)) return escapeHtml(typeof v==='object'?fmtBonus(v):nz(v));
+    return escapeHtml(nz(v));
+  };
+  return `<tr>
+    <td><input class="ad-id" data-k="${escapeHtml(k)}" value="${escapeHtml(k)}" onchange="gearKey(this,'${g.sec}')"></td>
+    <td><input data-k="${escapeHtml(k)}" value="${escapeHtml(rec.name)}" onchange="gearVal(this,'${g.sec}','name')"></td>
+    ${g.num.map(([fk])=>`<td><input type="number" step="any" data-k="${escapeHtml(k)}" value="${fmt(fk)}" onchange="gearVal(this,'${g.sec}','${fk}')"></td>`).join('')}
+    ${g.dict.map(([fk])=>`<td><input data-k="${escapeHtml(k)}" value="${fmt(fk)}" onchange="gearVal(this,'${g.sec}','${fk}')"></td>`).join('')}
+    <td><button onclick="gearDel(this,'${g.sec}')" style="background:#fee2e2;color:#b91c1c;border:none;border-radius:5px;padding:3px 8px;cursor:pointer">🗑</button></td>
+  </tr>`;
+}
+function gearVal(inp, sec, field){
+  const rec = _gearData[sec][inp.dataset.k];
+  if(!rec) return;
+  const isDict = GEAR_CFG.find(g=>g.sec===sec).dict.some(f=>f[0]===field);
+  rec[field] = isDict ? parseBonus(inp.value) : (field==='name' ? inp.value : (parseFloat(inp.value)||0));
+}
+function gearKey(inp, sec){
+  const old = inp.dataset.k, nk = (inp.value||'').trim();
+  if(!nk || nk===old) return;
+  if(_gearData[sec][nk]){ alert('已存在：'+nk); inp.value=old; return; }
+  _gearData[sec][nk] = _gearData[sec][old];
+  delete _gearData[sec][old];
+  renderGears();
+}
+function gearDel(inp, sec){
+  const k = inp.dataset.k;
+  if(!confirm('删除该项？保存后生效')) return;
+  delete _gearData[sec][k];
+  renderGears();
+}
+function gearAdd(sec){
+  const g = GEAR_CFG.find(x=>x.sec===sec);
+  const ks = Object.keys(_gearData[sec]);
+  const nums = ks.map(Number).filter(n=>!isNaN(n));
+  let k = g.keyIsLv ? String((nums.length? Math.max(...nums) : 0)+1) : 'bait'+(ks.length+1);
+  while(_gearData[sec][k]) k += 'x';
+  const rec = {name:'新装备', price:0};
+  g.num.forEach(([fk])=>{ rec[fk] = fk==='mult' ? 1 : 0; });
+  g.dict.forEach(([fk])=>{ rec[fk] = {}; });
+  _gearData[sec][k] = rec;
+  renderGears();
+}
+async function saveFishGears(sec){
+  try{
+    const d = await post('/api/admin/fishing', {section: sec, data: _gearData[sec]});
+    fb('fb-'+sec, d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-'+sec, e.message, false); }
+}
+function renderFishTable(){
+  const box = document.getElementById('fish-table-wrap');
+  if(!box) return;
+  const sel = document.getElementById('fish-rarity-filter');
+  if(sel.options.length===1){
+    sel.innerHTML = '<option value="">全部</option>' + Object.keys(RARITY_CN).map(r=>`<option value="${r}">${RARITY_CN[r]}</option>`).join('');
+  }
+  if(!Object.keys(_fishData).length && _fishCfg) _fishData = JSON.parse(JSON.stringify(_fishCfg.fish||{}));
+  const fish = _fishData;
+  const q = (document.getElementById('fish-search').value||'').toLowerCase();
+  const rf = sel.value;
+  const ids = Object.keys(fish).filter(fid=>{
+    const f = fish[fid]||{};
+    if(rf && f.rarity!==rf) return false;
+    if(q && !(fid.toLowerCase().includes(q) || (f.name||'').toLowerCase().includes(q))) return false;
+    return true;
+  }).sort();
+  const rows = ids.map(fid=>{
+    const f = fish[fid]||{};
+    return `<tr>
+      <td><input class="ad-id" data-fid="${escapeHtml(fid)}" value="${escapeHtml(fid)}" onchange="fishKey(this)"></td>
+      <td><input data-fid="${escapeHtml(fid)}" value="${escapeHtml(f.name)}" onchange="fishVal(this,'name')"></td>
+      <td><input data-fid="${escapeHtml(fid)}" value="${escapeHtml(f.emoji)}" style="width:60px" onchange="fishVal(this,'emoji')"></td>
+      <td><select data-fid="${escapeHtml(fid)}" onchange="fishVal(this,'rarity')">${Object.keys(RARITY_CN).map(r=>`<option value="${r}" ${r===f.rarity?'selected':''}>${RARITY_CN[r]}</option>`).join('')}</select></td>
+      <td><input type="number" data-fid="${escapeHtml(fid)}" value="${nz(f.base)}" onchange="fishVal(this,'base')"></td>
+      <td><input type="number" data-fid="${escapeHtml(fid)}" value="${nz(f.wmin)}" onchange="fishVal(this,'wmin')"></td>
+      <td><input type="number" data-fid="${escapeHtml(fid)}" value="${nz(f.wmax)}" onchange="fishVal(this,'wmax')"></td>
+      <td><select data-fid="${escapeHtml(fid)}" onchange="fishVal(this,'zone')">
+        <option value="day" ${f.zone==='day'?'selected':''}>昼</option>
+        <option value="night" ${f.zone==='night'?'selected':''}>夜</option></select></td>
+      <td><button onclick="fishDel(this)" style="background:#fee2e2;color:#b91c1c;border:none;border-radius:5px;padding:3px 8px;cursor:pointer">🗑</button></td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table class="ad-tb"><thead><tr>
+    <th style="width:150px">ID</th><th>名称</th><th style="width:60px">图标</th><th>稀有度</th>
+    <th style="width:70px">基础价</th><th style="width:70px">最轻(g)</th><th style="width:70px">最重(g)</th><th>时段</th><th></th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById('fish-count').textContent = Object.keys(fish).length;
+}
+function fishVal(inp, field){
+  const f = _fishData[inp.dataset.fid];
+  if(!f) return;
+  f[field] = (field==='base'||field==='wmin'||field==='wmax') ? (parseInt(inp.value)||0) : inp.value;
+}
+function fishKey(inp){
+  const old = inp.dataset.fid, nk = (inp.value||'').trim();
+  if(!nk || nk===old) return;
+  if(_fishData[nk]){ alert('ID 已存在：'+nk); inp.value=old; return; }
+  _fishData[nk] = _fishData[old];
+  delete _fishData[old];
+  renderFishTable();
+}
+function fishDel(inp){
+  const fid = inp.dataset.fid;
+  if(!confirm('删除鱼种「'+((_fishData[fid]||{}).name||fid)+'」？保存后生效')) return;
+  delete _fishData[fid];
+  renderFishTable();
+}
+function addFishRow(){
+  const fid = 'f_new_' + Date.now().toString(36);
+  _fishData[fid] = {name:'新鱼', emoji:'🐟', rarity:'common', base:30, wmin:100, wmax:500, zone:'day'};
+  renderFishTable();
+}
+function renderGacha(){
+  const ch = (_fishCfg.gacha||{}).chance || {};
+  document.getElementById('fish-gacha').innerHTML =
+    Object.keys(RARITY_CN).map(r=>`
+      <div><label>${RARITY_CN[r]} 权重</label>
+      <input type="number" step="0.01" data-key="${r}" value="${nz(ch[r])}"></div>`).join('');
+}
+function renderExchange(){
+  _exData = JSON.parse(JSON.stringify((_fishCfg.exchange)||{}));
+  const keys = Object.keys(_exData).sort();
+  const rows = keys.map(k=>{
+    const g = _exData[k];
+    return `<tr>
+      <td><input class="ad-id" data-k="${escapeHtml(k)}" value="${escapeHtml(k)}" onchange="exKey(this)"></td>
+      <td><input data-k="${escapeHtml(k)}" value="${escapeHtml(g.name)}" onchange="exVal(this,'name')"></td>
+      <td><input type="number" data-k="${escapeHtml(k)}" value="${num0(g.price)}" onchange="exVal(this,'price')"></td>
+      <td><input type="number" data-k="${escapeHtml(k)}" value="${num0(g.shelf)}" onchange="exVal(this,'shelf')"></td>
+      <td><button onclick="exDel(this)" style="background:#fee2e2;color:#b91c1c;border:none;border-radius:5px;padding:3px 8px;cursor:pointer">🗑</button></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('fish-exchange').innerHTML =
+    `<table class="ad-tb"><thead><tr><th>ID</th><th>名称</th><th>基础价</th><th>保质期(天)</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function exVal(inp, field){
+  const g = _exData[inp.dataset.k];
+  if(!g) return;
+  g[field] = field==='name' ? inp.value : (parseInt(inp.value)||0);
+}
+function exKey(inp){
+  const old = inp.dataset.k, nk = (inp.value||'').trim();
+  if(!nk || nk===old) return;
+  if(_exData[nk]){ alert('已存在：'+nk); inp.value=old; return; }
+  _exData[nk] = _exData[old];
+  delete _exData[old];
+  renderExchange();
+}
+function exDel(inp){
+  if(!confirm('删除该商品？保存后生效')) return;
+  delete _exData[inp.dataset.k];
+  renderExchange();
+}
+function exAdd(){
+  let k = 'good' + (Object.keys(_exData).length+1);
+  while(_exData[k]) k += 'x';
+  _exData[k] = {name:'新商品', price:100, shelf:3};
+  renderExchange();
+}
+function renderSocialAuto(){
+  const s = (_fishCfg.social)||{}, a = (_fishCfg.auto)||{};
+  document.getElementById('fish-social-auto').innerHTML =
+    SOC_FIELDS.map(([k,cn])=>`<div><label>${cn}</label><input type="number" step="any" data-g="social" data-key="${k}" value="${nz(s[k])}"></div>`).join('') +
+    AUTO_FIELDS.map(([k,cn])=>`<div><label>${cn}</label><input type="number" step="any" data-g="auto" data-key="${k}" value="${nz(a[k])}"></div>`).join('');
+}
+async function saveFishSocialAuto(){
+  const social = {}, auto = {};
+  document.querySelectorAll('#fish-social-auto [data-g]').forEach(inp=>{
+    (inp.dataset.g==='social'?social:auto)[inp.dataset.key] = parseFloat(inp.value)||0;
+  });
+  try{
+    let ok = true, msg = '已保存';
+    for(const sec of ['social','auto']){
+      const d = await post('/api/admin/fishing', {section: sec, data: sec==='social'?social:auto});
+      if(!d.ok){ ok=false; msg=d.msg||'保存失败'; break; }
+    }
+    fb('fb-socialauto', msg, ok);
+    if(ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-socialauto', e.message, false); }
+}
+async function resetFishSocialAuto(){
+  if(!confirm('恢复社交/自动钓鱼为代码默认？')) return;
+  try{
+    let ok = true;
+    for(const sec of ['social','auto']){
+      const d = await post('/api/admin/fishing/reset', {section: sec});
+      if(!d.ok) ok = false;
+    }
+    fb('fb-socialauto', ok?'已恢复默认':'部分失败', ok);
+    if(ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-socialauto', e.message, false); }
+}
+function renderGamble(){
+  if(_gamData===null){
+    _gamData = JSON.parse(JSON.stringify((_fishCfg.gamble)||{}));
+    _gamData.sicbo = _gamData.sicbo || {};
+    _gamData.wheel = _gamData.wheel || {};
+    _gamData.eraser = _gamData.eraser || [];
+  }
+  const s = _gamData.sicbo, w = _gamData.wheel;
+  const pts = s.points || [1,2,12];
+  document.getElementById('fish-gamble').innerHTML = `
+    <div style="font-size:13px;font-weight:700;margin:8px 0 4px">骰宝赔率（填 1:x 的 x）</div>
+    <div class="ad-grid">
+      <div><label>豹子</label><input type="number" id="gam-baozi" value="${nz(s.baozi)}"></div>
+      <div><label>大小单双</label><input type="number" id="gam-even" value="${nz(s.even)}"></div>
+      <div><label>点数出现1次</label><input type="number" id="gam-p0" value="${num0(pts[0])}"></div>
+      <div><label>点数出现2次</label><input type="number" id="gam-p1" value="${num0(pts[1])}"></div>
+      <div><label>点数出现3次</label><input type="number" id="gam-p2" value="${num0(pts[2])}"></div>
+    </div>
+    <div style="font-size:13px;font-weight:700;margin:12px 0 4px">命运之轮</div>
+    <div class="ad-grid">
+      <div><label>最高层数</label><input type="number" id="gam-wmax" value="${nz(w.max)}"></div>
+      <div><label>第1层成功率</label><input type="number" step="0.01" id="gam-base" value="${nz(w.base_rate)}"></div>
+      <div><label>每层递减</label><input type="number" step="0.01" id="gam-step" value="${nz(w.rate_step)}"></div>
+      <div><label>成功率下限</label><input type="number" step="0.01" id="gam-min" value="${nz(w.min_rate)}"></div>
+      <div><label>奖金倍率基数</label><input type="number" step="0.01" id="gam-factor" value="${nz(w.factor)}"></div>
+    </div>
+    <div style="font-size:13px;font-weight:700;margin:12px 0 4px">擦弹倍率表（下限 ~ 上限 → 权重）</div>
+    <table class="ad-tb" id="gam-eraser"><thead><tr><th>下限</th><th>上限</th><th>权重</th><th></th></tr></thead><tbody>${eraserRows()}</tbody></table>
+    <div class="ad-btns" style="margin-top:8px"><button onclick="eraserAdd()">➕ 新增区间</button></div>`;
+}
+function eraserRows(){
+  return (_gamData.eraser||[]).map((row,i)=>`<tr>
+    <td><input type="number" step="any" value="${row[0]}" onchange="eraserSet(${i},0,this.value)"></td>
+    <td><input type="number" step="any" value="${row[1]}" onchange="eraserSet(${i},1,this.value)"></td>
+    <td><input type="number" step="any" value="${row[2]}" onchange="eraserSet(${i},2,this.value)"></td>
+    <td><button onclick="eraserDel(${i})" style="background:#fee2e2;color:#b91c1c;border:none;border-radius:5px;padding:3px 8px;cursor:pointer">🗑</button></td></tr>`).join('');
+}
+function eraserSet(i,col,v){ _gamData.eraser[i][col] = parseFloat(v)||0; }
+function eraserDel(i){ _gamData.eraser.splice(i,1); document.querySelector('#gam-eraser tbody').innerHTML = eraserRows(); }
+function eraserAdd(){ _gamData.eraser.push([0,1,100]); document.querySelector('#gam-eraser tbody').innerHTML = eraserRows(); }
+async function saveFishGamble(){
+  const s = _gamData.sicbo, w = _gamData.wheel;
+  s.baozi = parseInt(document.getElementById('gam-baozi').value)||1;
+  s.even = parseInt(document.getElementById('gam-even').value)||1;
+  s.points = [
+    parseInt(document.getElementById('gam-p0').value)||1,
+    parseInt(document.getElementById('gam-p1').value)||2,
+    parseInt(document.getElementById('gam-p2').value)||12,
+  ];
+  w.max = parseInt(document.getElementById('gam-wmax').value)||1;
+  w.base_rate = parseFloat(document.getElementById('gam-base').value)||0;
+  w.rate_step = parseFloat(document.getElementById('gam-step').value)||0;
+  w.min_rate = parseFloat(document.getElementById('gam-min').value)||0;
+  w.factor = parseFloat(document.getElementById('gam-factor').value)||1;
+  try{
+    const d = await post('/api/admin/fishing', {section:'gamble', data:_gamData});
+    fb('fb-gamble', d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-gamble', e.message, false); }
+}
+function collectSection(section){
+  if(section==='economy'){
+    const data = {};
+    document.querySelectorAll('#fish-economy [id^="econ-"]').forEach(inp=>{
+      data[inp.id.slice(5)] = parseFloat(inp.value)||0;
+    });
+    return data;
+  }
+  if(section==='fish') return _fishData;
+  if(section==='gacha'){
+    const chance = {};
+    document.querySelectorAll('#fish-gacha [data-key]').forEach(inp=>chance[inp.dataset.key] = parseFloat(inp.value)||0);
+    return {chance};
+  }
+  if(section==='exchange') return _exData;
+  if(section==='gamble') return _gamData;
+  if(section==='rods'||section==='hooks'||section==='lines'||section==='floats'||section==='baits') return _gearData[section];
+  return {};
+}
+async function saveFishSection(section){
+  const data = collectSection(section);
+  try{
+    const d = await post('/api/admin/fishing', {section, data});
+    fb('fb-'+section, d.ok?'已保存':(d.msg||'保存失败'), d.ok);
+    if(d.ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-'+section, e.message, false); }
+}
+async function resetFishSection(section){
+  if(!confirm('恢复「'+section+'」为代码默认（你自定义的会清掉）？')) return;
+  try{
+    const d = await post('/api/admin/fishing/reset', {section});
+    fb('fb-'+section, d.ok?'已恢复默认':(d.msg||'失败'), d.ok);
+    if(d.ok){ _tabLoaded.fishing=false; showTab('fishing'); }
+  }catch(e){ fb('fb-'+section, e.message, false); }
+}
+
+// ---------- 用户数据 ----------
+async function loadUsers(){
+  try{
+    const d = await (await fetch('/api/admin/users')).json();
+    const list = d.users || [];
+    const box = document.getElementById('users-list');
+    if(!list.length){ box.innerHTML = '<div class="usr-card">暂无用户数据</div>'; return; }
+    box.innerHTML = list.map(u=>{
+      const f = u.fishing||{}, c = u.cards||{}, e = u.exchange||{};
+      const last = f.last_fish ? new Date(f.last_fish*1000).toLocaleString('zh-CN',{hour12:false}) : '从未';
+      const oid = escapeHtml(u.openid);
+      return `<div class="usr-card">
+        <div class="usr-head">
+          <div>
+            <b>${escapeHtml(u.nick||'未命名')}</b>
+            <span style="font-size:11px;color:#94a3b8;margin-left:6px">${oid}</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:12px;color:#666">喵币</span>
+            <input type="number" id="bal-${oid}" style="width:110px;padding:4px 8px;border-radius:6px;border:1px solid #d1d5db" value="${u.balance}">
+            <button onclick="saveUserBalance('${oid}')" style="background:#22c55e;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">保存余额</button>
+            <button onclick="resetUserFishing('${oid}')" style="background:#ef4444;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">重置钓鱼</button>
+          </div>
+        </div>
+        <div class="usr-meta">
+          🎣 钓竿${f.rod} 鱼钩${f.hook} 鱼线${f.line} 鱼漂${f.float} ｜ 背包 ${f.inventory_count} 条 ｜ 图鉴 ${f.codex_count} 种 ｜ 累计钓 ${f.catches} 次 ｜ 卖鱼 ${f.sold_earn} 币 ｜ 扭蛋 ${f.gacha} 次 ｜ 成就 ${f.ach_count} ｜ ${f.auto_fish?'自动钓鱼中':'自动钓鱼关'} ｜ 最近 ${last}
+        </div>
+        <div class="usr-meta">
+          🃏 卡牌 ${c.count} 张（市场中 ${c.market}）｜ 素材 ${c.materials} 个 ｜ 📈 交易所持仓 ${e.qty} 份（${e.kinds} 种）
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){ document.getElementById('users-list').textContent = '加载失败: ' + e; }
+}
+async function saveUserBalance(oid){
+  const v = parseInt(document.getElementById('bal-'+oid).value)||0;
+  const d = await post('/api/admin/users/balance', {openid: oid, balance: v});
+  if(d.ok) document.getElementById('bal-'+oid).value = d.balance;
+  alert(d.ok ? ('余额已设为 ' + d.balance + ' 喵币') : (d.msg||'保存失败'));
+}
+async function resetUserFishing(oid){
+  if(!confirm('清空该用户的钓鱼数据（鱼获/图鉴/装备/成就）？此操作不可恢复！')) return;
+  const d = await post('/api/admin/users/reset_fishing', {openid: oid});
+  alert(d.ok ? '已重置' : (d.msg||'失败'));
+  if(d.ok){ _tabLoaded.users=false; showTab('users'); }
+}
+
 loadAi(); loadBalance(); loadMem(); loadParsePlats(); loadBiliMode();
 refresh();
-setInterval(refresh, 3000);
+setInterval(refresh, 10000);
 </script>
 </body>
 </html>

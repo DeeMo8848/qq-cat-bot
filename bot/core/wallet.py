@@ -77,9 +77,26 @@ def transfer(from_openid, to_openid, amount) -> bool:
         return True
 
 
+def set_balance(openid, amount) -> int:
+    """直接设置余额（Web 后台管理用），返回最新余额。amount 小于 0 按 0 处理。"""
+    with _lock:
+        data = _load()
+        v = max(0, int(amount))
+        data["balances"][str(openid)] = v
+        _save(data)
+        return v
+
+
 def top(n: int = 10):
     """余额排行，返回 [(openid, 余额)...]。"""
     with _lock:
         data = _load()
         items = sorted(data["balances"].items(), key=lambda kv: -kv[1])[:n]
         return [(k, int(v)) for k, v in items if int(v) > 0]
+
+
+def all_balances() -> dict:
+    """返回全部用户的余额 {openid: 余额}（Web 后台管理用）。"""
+    with _lock:
+        data = _load()
+        return {k: int(v) for k, v in data["balances"].items()}

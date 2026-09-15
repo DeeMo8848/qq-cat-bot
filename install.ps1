@@ -5,9 +5,10 @@
 #   1. 检测 Python，安装 requirements.txt + meme-generator==0.1.14（固定版本，勿升 rs 版）
 #   2. 下载 BBDown 1.6.3 到 tools/BBDown/
 #   3. 下载 ffmpeg 到 tools/ffmpeg/
-#   4. 生成 settings.json（从 settings.example.json 复制，需手动填入凭据）
-#   5. 克隆「图库仓库」到 resources/image_lib（龙图目录自动使用其 dragon/ 子目录）
-#   6. 拉取 meme 素材：优先克隆聚合仓库 qq-cat-memes（含子模块），失败则直接克隆公开源仓库
+#   4. 克隆 cardforge（卡牌制作工具）到 tools/cardforge/
+#   5. 生成 settings.json（从 settings.example.json 复制，需手动填入凭据）
+#   6. 克隆「图库仓库」到 resources/image_lib（龙图目录自动使用其 dragon/ 子目录）
+#   7. 拉取 meme 素材：优先克隆聚合仓库 qq-cat-memes（含子模块），失败则直接克隆公开源仓库
 #
 #  用法（在本目录执行）：
 #     powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -33,7 +34,7 @@ Write-Host "QQ 机器人环境安装程序" -ForegroundColor Green
 Write-Host "项目目录: $Root"
 
 # ---------- 1. Python ----------
-Write-Step "第 1 步 / 共 7 步：Python 环境检测"
+Write-Step "第 1 步 / 共 8 步：Python 环境检测"
 if (Test-Path $PythonPath) { $Py = $PythonPath }
 elseif (Test-Cmd $PythonPath) { $Py = (Get-Command $PythonPath).Source }
 else {
@@ -45,7 +46,7 @@ Write-Host "使用 Python: $Py"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # ---------- 2. pip 依赖 ----------
-Write-Step "第 2 步 / 共 7 步：安装 pip 依赖"
+Write-Step "第 2 步 / 共 8 步：安装 pip 依赖"
 & $Py -m pip install --upgrade pip | Out-Null
 & $Py -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) {
@@ -62,7 +63,7 @@ if ($LASTEXITCODE -ne 0) {
 $tools = Join-Path $Root "tools"
 New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-Write-Step "第 3 步 / 共 7 步：下载 BBDown"
+Write-Step "第 3 步 / 共 8 步：下载 BBDown"
 $bbDir = Join-Path $tools "BBDown"
 $bbExe = Join-Path $bbDir "BBDown.exe"
 if (Test-Path $bbExe) {
@@ -81,7 +82,7 @@ if (Test-Path $bbExe) {
     Write-Host "BBDown 就绪: $bbExe"
 }
 
-Write-Step "第 3 步 / 共 7 步：下载 ffmpeg"
+Write-Step "第 3 步 / 共 8 步：下载 ffmpeg"
 $ffDir = Join-Path $tools "ffmpeg"
 $ffExe = Join-Path $ffDir "ffmpeg.exe"
 if (Test-Path $ffExe) {
@@ -105,8 +106,27 @@ if (Test-Path $ffExe) {
     Write-Host "ffmpeg 就绪: $ffExe"
 }
 
-# ---------- 4. 配置 ----------
-Write-Step "第 4 步 / 共 7 步：初始化配置 settings.json"
+# ---------- 4. cardforge（卡牌制作工具）----------
+Write-Step "第 4 步 / 共 8 步：克隆 cardforge（卡牌制作工具）"
+$cfDir = Join-Path $tools "cardforge"
+if (Test-Path (Join-Path $cfDir "cardforge.py")) {
+    Write-Host "cardforge 已存在（$cfDir），跳过。"
+} elseif (-not (Test-Cmd git)) {
+    Write-Host "未安装 git，跳过 cardforge 拉取（可在 settings.json 的 CARD_DIR 指定已有目录）。" -ForegroundColor Yellow
+} else {
+    Write-Host "克隆 cardforge ..."
+    $cfUrl = "https://github.com/DeeMo8848/cardforge.git"
+    if ($GitToken) { $cfUrl = "https://x-access-token:$GitToken@github.com/DeeMo8848/cardforge.git" }
+    git clone --depth 1 $cfUrl $cfDir 2>&1 | Out-Null
+    if (Test-Path (Join-Path $cfDir "cardforge.py")) {
+        Write-Host "cardforge 就绪: $cfDir（首次制作卡牌时自动安装依赖与抠图模型）"
+    } else {
+        Write-Host "cardforge 克隆失败（私有仓库需 -GitToken 或已 git 登录）。可在 settings.json 的 CARD_DIR 指定已有目录。" -ForegroundColor Yellow
+    }
+}
+
+# ---------- 5. 配置 ----------
+Write-Step "第 5 步 / 共 8 步：初始化配置 settings.json"
 $settingFp = Join-Path $Root "settings.json"
 if (-not (Test-Path $settingFp)) {
     Copy-Item (Join-Path $Root "settings.example.json") $settingFp
@@ -115,8 +135,8 @@ if (-not (Test-Path $settingFp)) {
     Write-Host "settings.json 已存在，跳过。"
 }
 
-# ---------- 5. 图库（龙图）----------
-Write-Step "第 5 步 / 共 7 步：克隆图库仓库（龙图素材）"
+# ---------- 6. 图库（龙图）----------
+Write-Step "第 6 步 / 共 8 步：克隆图库仓库（龙图素材）"
 $imgLib = Join-Path $Root "resources\image_lib"
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "resources") | Out-Null
 if (Test-Path (Join-Path $imgLib "dragon")) {
@@ -135,8 +155,8 @@ if (Test-Path (Join-Path $imgLib "dragon")) {
     }
 }
 
-# ---------- 6. meme 素材 ----------
-Write-Step "第 6 步 / 共 7 步：拉取 meme 素材"
+# ---------- 7. meme 素材 ----------
+Write-Step "第 7 步 / 共 8 步：拉取 meme 素材"
 $custom = Join-Path $Root "bot\meme\custom_memes"
 New-Item -ItemType Directory -Force -Path $custom | Out-Null
 if (-not (Test-Cmd git)) {
@@ -192,8 +212,8 @@ if (-not (Test-Cmd git)) {
     Write-Host "meme 素材拉取/装载完成（与内置重复的关键词会被自动忽略）。"
 }
 
-# ---------- 7. 重建 meme 关键词 ----------
-Write-Step "第 7 步 / 共 7 步：重建 meme 关键词数据"
+# ---------- 8. 重建 meme 关键词 ----------
+Write-Step "第 8 步 / 共 8 步：重建 meme 关键词数据"
 & $Py bot\meme\rebuild_data.py
 if ($LASTEXITCODE -ne 0) {
     Write-Host "meme 关键词重建失败（仓库已带一份 meme_data.py，可正常使用；稍后用「meme更新」重试）。" -ForegroundColor Yellow

@@ -16,10 +16,11 @@ import botpy
 
 from bot import commands  # noqa: F401  确保命令模块加载
 from bot.core.sender import Sender
+from bot.core.static_server import start_static
 from bot.core.tunnel import TunnelManager
 from bot.core.webhook import start_webhook
 from bot.core.webui import start_webui
-from config import APPID, SECRET, DEBUG, WEBUI_PORT, WEBHOOK_PORT
+from config import APPID, SECRET, DEBUG, WEBUI_PORT, WEBHOOK_PORT, STATIC_PUBLIC_URL
 
 _LOG_LEVEL = "DEBUG" if DEBUG else "INFO"
 
@@ -105,10 +106,15 @@ async def main():
     wh_runner, wh_site = await start_webhook(bot.api, port=WEBHOOK_PORT)
     print(f"  [OK] Webhook 服务已启动: http://127.0.0.1:{WEBHOOK_PORT}（需配合内网穿透使用）")
 
+    # 启动静态页面服务（仅开放 bot/public_html/，供公网链接访问）
+    st_runner, st_site = await start_static()
+    print(f"  [OK] 静态页面服务已启动，公网地址: {STATIC_PUBLIC_URL}")
+
     try:
         # 启动机器人（失败自动重试，Web 后台保持运行）
         await run_bot_forever(bot)
     finally:
+        await st_runner.cleanup()
         await wh_runner.cleanup()
         await runner.cleanup()
 

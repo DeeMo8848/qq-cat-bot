@@ -36,7 +36,7 @@ _DEFAULTS = {
     "provider": "deepseek",
     "api_key": "",
     "base_url": "https://api.deepseek.com",
-    "model": "deepseek-chat",
+    "model": "deepseek-flash",
     "system_preset": _DEFAULT_PRESET,
     "max_history": 12,          # 保留多少轮上下文
     "memory_interval": 0,       # 记忆总结间隔（轮）；0 = 关闭自动总结
@@ -148,6 +148,7 @@ async def _call(cfg, messages, timeout=90):
         "model": cfg["model"],
         "messages": messages,
         "temperature": float(cfg.get("temperature", 0.85)),
+        "thinking": {"type": "disabled"},
         "stream": False,
     }
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:

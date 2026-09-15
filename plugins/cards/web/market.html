@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🏪 卡牌商店</title>
+<style>
+  :root {
+    --bg:#14100c; --panel:#221b16; --line:#3d2f24;
+    --gold:#e3b95c; --gold2:#f3d48a; --text:#ece4d6; --muted:#a99b86;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, #2a2018 0%, var(--bg) 60%);
+    color: var(--text); font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    min-height:100vh;
+  }
+  header {
+    position: sticky; top:0; z-index:20;
+    background: rgba(20,16,12,.85); backdrop-filter: blur(8px);
+    border-bottom:1px solid var(--line);
+    padding:16px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  header h1 { font-size:20px; color:var(--gold2); letter-spacing:1px; }
+  header .count { color:var(--muted); font-size:13px; }
+  header .note { color:#b99c6a; font-size:13px; margin-left:auto; }
+  header .note-sub { display:block; margin-top:2px; font-size:11px; color:var(--muted); font-weight:normal; }
+
+  .tabs {
+    position: sticky; top:64px; z-index:15;
+    display:flex; gap:8px; flex-wrap:wrap;
+    background: rgba(20,16,12,.92); backdrop-filter: blur(8px);
+    border-bottom:1px solid var(--line);
+    padding:10px 24px;
+  }
+  .tabs button {
+    padding:7px 18px; border-radius:999px; cursor:pointer; font-size:13px;
+    background: var(--panel); color:var(--muted); border:1px solid var(--line);
+    transition:all .15s; font-family:inherit;
+  }
+  .tabs button:hover { color:var(--gold2); border-color:var(--gold); }
+  .tabs button.on {
+    background:linear-gradient(135deg,var(--gold2),var(--gold));
+    color:#2b1d08; border-color:var(--gold); font-weight:700;
+  }
+
+  main { max-width:1240px; margin:0 auto; padding:28px 24px 60px; }
+  .panel { display:none; }
+  .panel.on { display:block; }
+
+  .grid {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));
+    gap:22px;
+  }
+  .card { perspective:900px; cursor:pointer; position:relative; }
+  .card .inner {
+    transform-style: preserve-3d;
+    transition: transform .18s ease-out;
+    will-change: transform;
+  }
+  .thumbwrap { position:relative; }
+  .card img {
+    width:100%; aspect-ratio:3/4; object-fit:cover;
+    border-radius:12px; border:1px solid var(--line);
+    display:block; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .card:hover img { border-color:var(--gold); box-shadow: 0 16px 44px rgba(227,185,92,.22); }
+  .card .rarity {
+    position:absolute; top:8px; left:8px; z-index:2;
+    font-size:11px; font-weight:700; border-radius:999px; padding:2px 10px; letter-spacing:1px;
+  }
+  .card .price-tag {
+    position:absolute; bottom:8px; right:8px; z-index:2;
+    background:rgba(20,12,8,.82); border:1px solid var(--gold); color:var(--gold2);
+    font-size:12px; font-weight:700; border-radius:999px; padding:2px 10px;
+  }
+  .card .name {
+    margin-top:8px; text-align:center; font-size:13px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .card:hover .name { color:var(--gold2); }
+  .card .seller { text-align:center; font-size:12px; color:#8a7a62; margin-top:2px; }
+  .card .buy-cmd {
+    margin-top:5px; text-align:center; font-size:11px; color:#b99c6a;
+    background:rgba(34,27,22,.7); border:1px dashed var(--line); border-radius:8px;
+    padding:4px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .empty { text-align:center; color:var(--muted); padding:80px 0; font-size:15px; }
+
+  .r-cu  { background:linear-gradient(135deg,#d9a06b,#8f5a2a); color:#2b1d08; }
+  .r-yin { background:linear-gradient(135deg,#e8f0f6,#8fa3b5); color:#1d2b33; }
+  .r-jin { background:linear-gradient(135deg,#f7e3ad,#c99a3f); color:#2b1d08; }
+  .r-hong {
+    background:linear-gradient(90deg,#ff6a6a,#ff9f4d,#ffe066,#7ee787,#64c5ff,#c792ea,#ff6a9c,#ff6a6a);
+    background-size:400% 100%; animation: rainbow 3s linear infinite; color:#1a1205;
+  }
+  @keyframes rainbow { to { background-position:400% 0; } }
+
+  /* 素材网格 */
+  .m-grid {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+    gap:18px;
+  }
+  .mitem {
+    border:1px solid var(--line); border-radius:12px; overflow:hidden;
+    background:var(--panel); transition:border-color .2s, box-shadow .2s;
+  }
+  .mitem:hover { border-color:var(--gold); box-shadow: 0 12px 34px rgba(227,185,92,.15); }
+  .mitem .thumb {
+    position:relative; width:100%; aspect-ratio:1/1;
+    background:#1c1713; display:flex; align-items:center; justify-content:center;
+  }
+  .mitem .thumb img {
+    width:100%; height:100%; object-fit:cover; display:block;
+  }
+  .mitem .thumb .glow-preview {
+    width:78%; height:78%; border-radius:14px;
+    border:1px solid var(--line);
+    background:linear-gradient(160deg,#3a2f22,#1a1511);
+  }
+  .mitem .price-tag {
+    position:absolute; top:8px; right:8px;
+    background:rgba(20,12,8,.82); border:1px solid var(--gold); color:var(--gold2);
+    font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px;
+  }
+  .mitem .free-tag {
+    position:absolute; top:8px; left:8px;
+    background:rgba(10,28,16,.86); border:1px solid #5dbb7c; color:#8fe0a8;
+    font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px;
+  }
+  .mitem .info { padding:9px 11px 11px; }
+  .mitem .name { font-size:13px; color:var(--gold2); text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mitem .buy-cmd {
+    margin-top:7px; text-align:center; font-size:11px; color:#b99c6a;
+    border:1px dashed var(--line); border-radius:8px; padding:4px 6px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  .modal {
+    position:fixed; inset:0; z-index:40; display:none;
+    background: rgba(8,6,4,.82); backdrop-filter: blur(6px);
+    align-items:center; justify-content:center; padding:30px;
+  }
+  .modal.show { display:flex; }
+  .modal .frame {
+    width:min(560px, 94vw); height:min(760px, 92vh);
+    background:#000; border-radius:16px; border:1px solid var(--gold);
+    overflow:hidden; box-shadow: 0 20px 80px rgba(0,0,0,.7); position:relative;
+  }
+  .modal iframe { width:100%; height:100%; border:0; }
+  .modal .close {
+    position:absolute; top:-14px; right:-14px; z-index:2;
+    width:36px; height:36px; border-radius:50%;
+    background:var(--gold); color:#2b1d08; border:none; font-size:16px; cursor:pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+  .modal .modalbar {
+    position:absolute; left:0; right:0; bottom:0; z-index:3;
+    display:flex; gap:10px; justify-content:center; padding:12px;
+    background: linear-gradient(transparent, rgba(8,6,4,.92));
+  }
+  .modal .modalbar a, .modal .modalbar button {
+    padding:8px 18px; border-radius:999px; cursor:pointer; font-size:13px;
+    background: rgba(34,27,22,.9); color:var(--gold2); border:1px solid var(--line);
+    transition:all .15s; text-decoration:none;
+  }
+  .modal .modalbar button:hover, .modal .modalbar a:hover { border-color:var(--gold); background:#32281c; }
+  .modal .modalbar button.on {
+    background:linear-gradient(135deg,var(--gold2),var(--gold)); color:#2b1d08; border-color:var(--gold);
+  }
+  .modal .hintbar {
+    position:absolute; left:0; right:0; bottom:52px;
+    background: linear-gradient(transparent, rgba(8,6,4,.9));
+    color:var(--muted); font-size:12px; text-align:center; padding:30px 0 12px;
+    pointer-events:none;
+  }
+  .modal .hintbar .web-tip {
+    display:block; font-size:11px; color:#b99c6a; margin-top:4px;
+    background:rgba(34,27,22,.75); border:1px dashed var(--line);
+    border-radius:8px; padding:4px 8px; margin:6px 12px 0; line-height:1.7;
+    pointer-events:auto;
+  }
+  .modal .hintbar .web-tip a {
+    color:var(--gold2); text-decoration:underline; margin:0 4px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏪 卡牌商店</h1>
+  <span class="count" id="count"></span>
+  <span class="note">购买请回 QQ 发文字命令<br><small class="note-sub">为什么不能在这里直接点击交易，为了让你回qq有打字的参与感</small></span>
+</header>
+<div class="tabs" id="tabs">
+  <button data-panel="market" class="on">🃏 市场</button>
+  <button data-panel="background">🖼️ 背景</button>
+  <button data-panel="frame">🖼️ 边框</button>
+  <button data-panel="seal">🖼️ 卡封</button>
+  <button data-panel="back">🖼️ 牌背</button>
+  <button data-panel="glow">✨ 辉光</button>
+</div>
+<main>
+  <div class="panel on" id="panel-market">
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none">市场空空如也喵，回 QQ 发「上架卡牌 卡名 价格」出售你的卡吧</div>
+  </div>
+  <div class="panel" id="panel-background"></div>
+  <div class="panel" id="panel-frame"></div>
+  <div class="panel" id="panel-seal"></div>
+  <div class="panel" id="panel-back"></div>
+  <div class="panel" id="panel-glow"></div>
+</main>
+
+<div class="modal" id="modal">
+  <button class="close" id="modalClose">✕</button>
+  <div class="frame">
+    <iframe id="modalFrame" src="about:blank"></iframe>
+    <div class="modalbar">
+      <button id="modalFlip" disabled>🔄 翻面</button>
+      <button id="modalSpin" disabled>🌀 自动旋转</button>
+      <a id="modalShare" href="#" target="_blank">🔗 分享</a>
+    </div>
+    <div class="hintbar">🖱️ 拖拽旋转 · 滚轮缩放 · 双击翻面
+      <span class="web-tip" id="webTip" style="display:none">📱 看不到卡牌（黑屏/空白）？QQ 内置浏览器不支持 3D 渲染，点<a id="openBrowser" href="#" target="_blank">这里用浏览器打开</a>，或复制分享链接</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const RARITY = {
+  '铜': { cls:'r-cu', label:'🥉 铜' }, '银': { cls:'r-yin', label:'🥈 银' },
+  '金': { cls:'r-jin', label:'🥇 金' }, '虹': { cls:'r-hong', label:'🌈 虹' },
+};
+const BUY_CN = { background:'购买背景', frame:'购买边框', seal:'购买卡封', back:'购买牌背', glow:'购买辉光' };
+const grid = document.getElementById('grid');
+const empty = document.getElementById('empty');
+let currentCard = null;
+let spinning = false;
+let materials = null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
+}
+
+// ---------- 市场 ----------
+async function load() {
+  let cards = [];
+  try {
+    const r = await fetch('/api/market');
+    const d = await r.json();
+    if (d.ok) cards = d.cards || [];
+  } catch (e) {}
+  document.getElementById('count').textContent = cards.length ? '共 ' + cards.length + ' 个挂单' : '';
+  grid.innerHTML = '';
+  empty.style.display = cards.length ? 'none' : 'block';
+  cards.forEach(c => grid.appendChild(makeCard(c)));
+}
+
+function makeCard(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+  const r = RARITY[c.rarity] || RARITY['铜'];
+  wrap.innerHTML = '<div class="inner"><div class="thumbwrap">' +
+    '<span class="rarity ' + r.cls + '">' + r.label + '</span>' +
+    '<span class="price-tag">' + esc(c.market_price) + ' 喵币</span>' +
+    '<img src="' + esc(c.card_png) + '" alt="" loading="lazy"></div>' +
+    '<div class="name">' + esc(c.name) + '</div>' +
+    '<div class="seller">卖家：' + esc(c.seller_nick || '神秘玩家') + '</div></div>';
+  const inner = wrap.querySelector('.inner');
+  wrap.addEventListener('mousemove', e => {
+    const rect = wrap.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width - 0.5;
+    const py = (e.clientY - rect.top) / rect.height - 0.5;
+    inner.style.transform = 'rotateY(' + (px * 12).toFixed(2) + 'deg) rotateX(' + (-py * 10).toFixed(2) + 'deg) translateZ(6px)';
+  });
+  wrap.addEventListener('mouseleave', () => { inner.style.transform = ''; });
+  wrap.addEventListener('click', () => openModal(c));
+  return wrap;
+}
+
+// ---------- 素材 ----------
+async function loadMaterials() {
+  if (materials) return;
+  try {
+    const r = await fetch('/api/materials');
+    const d = await r.json();
+    if (d.ok) materials = d.cats || [];
+  } catch (e) { materials = []; }
+  materials.forEach(cat => {
+    const panel = document.getElementById('panel-' + cat.cat);
+    if (!panel) return;
+    if (!cat.items.length) {
+      panel.innerHTML = '<div class="empty">这类素材暂时还没有喵</div>';
+      return;
+    }
+    const g = document.createElement('div');
+    g.className = 'm-grid';
+    cat.items.forEach(it => g.appendChild(makeMaterial(cat, it)));
+    panel.appendChild(g);
+  });
+}
+
+function makeMaterial(cat, it) {
+  const item = document.createElement('div');
+  item.className = 'mitem';
+  const price = it.free
+    ? '<span class="free-tag">基础素材</span>'
+    : (cat.price ? '<span class="price-tag">' + esc(cat.price) + ' 喵币</span>' : '');
+  const img = it.img
+    ? '<img src="' + esc(it.img) + '" alt="" loading="lazy">'
+    : '<div class="glow-preview"></div>';
+  item.innerHTML = '<div class="thumb">' + price + img + '</div>' +
+    '<div class="info"><div class="name">' + esc(it.name) + '</div>' +
+    '<div class="buy-cmd">' + esc(BUY_CN[cat.cat] || '购买素材') + ' ' + esc(it.name) + '</div></div>';
+  return item;
+}
+
+// ---------- tab 切换 ----------
+document.querySelectorAll('#tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('on'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
+    btn.classList.add('on');
+    const p = document.getElementById('panel-' + btn.dataset.panel);
+    if (p) p.classList.add('on');
+    if (btn.dataset.panel !== 'market') loadMaterials();
+  });
+});
+
+// ---------- 单卡弹窗 ----------
+function openModal(c) {
+  currentCard = c;
+  const frame = document.getElementById('modalFrame');
+  document.getElementById('modalShare').href = '/card/' + c.cardKey;
+  const webTip = document.getElementById('webTip');
+  webTip.style.display = c.has_webcard ? 'block' : 'none';
+  document.getElementById('openBrowser').href = c.has_webcard ? c.card_html : '#';
+  spinning = false;
+  document.getElementById('modalSpin').classList.remove('on');
+  document.getElementById('modalSpin').textContent = '🌀 自动旋转';
+  document.getElementById('modalFlip').disabled = true;
+  document.getElementById('modalSpin').disabled = true;
+  frame.onload = () => {
+    document.getElementById('modalFlip').disabled = !(frame.contentWindow && frame.contentWindow.__cardAPI);
+    document.getElementById('modalSpin').disabled = !(frame.contentWindow && frame.contentWindow.__cardAPI);
+  };
+  frame.src = c.has_webcard ? c.card_html : c.card_png;
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() {
+  const frame = document.getElementById('modalFrame');
+  if (spinning && frame.contentWindow && frame.contentWindow.__cardAPI) {
+    frame.contentWindow.__cardAPI.setAutoRotate(false);
+  }
+  spinning = false;
+  document.getElementById('modal').classList.remove('show');
+  document.getElementById('modalFrame').src = 'about:blank';
+}
+document.getElementById('modalFlip').addEventListener('click', () => {
+  const f = document.getElementById('modalFrame');
+  if (f.contentWindow && f.contentWindow.__cardAPI) f.contentWindow.__cardAPI.flipCard();
+});
+document.getElementById('modalSpin').addEventListener('click', () => {
+  const f = document.getElementById('modalFrame');
+  const btn = document.getElementById('modalSpin');
+  if (!f.contentWindow || !f.contentWindow.__cardAPI) return;
+  spinning = !spinning;
+  f.contentWindow.__cardAPI.setAutoRotate(spinning);
+  btn.classList.toggle('on', spinning);
+  btn.textContent = spinning ? '🌀 自动旋转中…' : '🌀 自动旋转';
+});
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+load();
+</script>
+</body>
+</html>

@@ -74,6 +74,10 @@ MENU_KEYWORDS = _cfg("MENU_KEYWORDS", ["菜单", "帮助", "功能", "help"])
 WEBUI_PORT = int(_cfg("WEBUI_PORT", 9090))
 WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 
+# 静态页面服务（网页测试等）：仅开放 bot/public_html/ 目录，公网地址为隧道域名
+STATIC_PORT = int(_cfg("STATIC_PORT", 9092))
+STATIC_PUBLIC_URL = _cfg("STATIC_PUBLIC_URL", "https://page.deemo8848.dpdns.org")
+
 # 执行 meme worker / B站渲染子进程所用的 Python（默认取 PATH 里的 python）
 PYTHON = _cfg("PYTHON", "python")
 

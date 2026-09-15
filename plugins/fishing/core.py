@@ -35,6 +35,7 @@ _HOOK_NAMES = {lv: name for lv, (name, _p, _b) in game.HOOKS.items()}
 _LINE_NAMES = {lv: name for lv, (name, _p, _m) in game.LINES.items()}
 _FLOAT_NAMES = {lv: name for lv, (name, _p, _r) in game.FLOATS.items()}
 _BAIT_NAMES = {k: v[0] for k, v in game.BAITS.items()}
+FISH_CD = 45              # 抛竿冷却（秒）
 GACHA_COST = 300          # 扭蛋单抽费用
 TOTAL_SPECIES = len(game.FISH)
 JACKPOT_REWARD = 20000    # 集齐全部鱼种的一次性大奖
@@ -157,7 +158,7 @@ async def cmd_fish(ctx):
     with _lock:
         data = _load()
         u = _user(data, oid)
-        cd = 45
+        cd = FISH_CD
         last = u.get("last_fish", 0)
         if now - last < cd:
             wait = cd - (now - last)

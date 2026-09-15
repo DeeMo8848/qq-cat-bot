@@ -26,6 +26,7 @@ bot/data/
 *.log
 *.log.err
 botpy.log
+botpy.log.*
 _run.log
 
 # 内网穿透 / 隧道（含本机 cloudflared 凭据）

@@ -17,5 +17,30 @@
   "JRYS_BACKGROUND": "",
   "_comment_jrys_background": "可选：「今日运势」卡片背景。留空用内置随机背景图 API；填公网图片 URL、或本地图片路径（绝对路径）、或本地图片目录（随机挑一张）。",
   "WEBUI_PORT": 9090,
-  "WEBHOOK_PORT": 9091
+  "WEBHOOK_PORT": 9091,
+  "STATIC_PORT": 9092,
+  "_comment_static": "静态页面服务端口：仅开放 bot/public_html/ 目录，公网地址经隧道域名 page.deemo8848.dpdns.org 访问，如需改端口需同步修改 tunnel/config.yml 里的路由。",
+  "CARD_DIR": "",
+  "_comment_card_dir": "cardforge 工具目录（含 cardforge.py）。留空时优先取 tools/cardforge（由 install.ps1 克隆），其次旧路径 D:\\略夹\\ai\\ai工具\\cardforge。",
+  "CARD_MAKE_COST": 200,
+  "_comment_card_make_cost": "卡牌制作费（喵币/次），AI 判定品级后按档位随机出价格。",
+  "CARD_MATERIAL_PRICES": {
+    "background": 500,
+    "frame": 800,
+    "seal": 1000,
+    "back": 600,
+    "glow": 800
+  },
+  "_comment_card_material_prices": "素材包单价（喵币/个，购买后永久使用）：background=背景 frame=边框 seal=卡封 back=牌背 glow=边框特效。",
+  "CARD_MARKET_TAX": 0.1,
+  "_comment_card_market_tax": "卡牌市场交易税（0.1 = 10%）：买家付全款，卖家实收 (1-税)。可在 Web 后台「卡牌管理」页修改。",
+  "CARD_RARITY_RANGES": {
+    "铜": [100, 300],
+    "银": [500, 1200],
+    "金": [2000, 5000],
+    "虹": [8000, 20000]
+  },
+  "_comment_card_rarity_ranges": "各品级卡牌的出价区间（最低价~最高价喵币，AI 判品级后区间内随机取整到 50）。可在 Web 后台「卡牌管理」页修改。",
+  "CARD_KEY_SECRET": "",
+  "_comment_card_key_secret": "卡牌收集册链接签名密钥（生成不可猜的 userKey）。留空则首次使用时自动生成并保存到 data/cards/key_secret.txt。"
 }

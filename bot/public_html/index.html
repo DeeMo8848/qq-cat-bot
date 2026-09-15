@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🐱 猫猫网页测试</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family:"Microsoft YaHei",system-ui,sans-serif;
+    background:linear-gradient(135deg,#fdf2f8 0%,#e0f2fe 50%,#fef9c3 100%);
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card {
+    background:#fff; border-radius:20px; max-width:560px; width:100%;
+    padding:36px 32px; box-shadow:0 12px 40px rgba(99,102,241,.15); text-align:center;
+  }
+  .cat { font-size:64px; line-height:1; animation:bounce 2s infinite; }
+  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+  h1 { font-size:26px; margin:16px 0 8px; color:#1e293b; }
+  .sub { color:#64748b; font-size:14px; margin-bottom:24px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px; }
+  .item { background:#f8fafc; border-radius:14px; padding:16px 10px; border:1px solid #e2e8f0; }
+  .item .ico { font-size:30px; }
+  .item .name { font-size:12px; color:#64748b; margin-top:8px; }
+  .item .val { font-size:18px; font-weight:700; color:#0f172a; margin-top:4px; }
+  .ok { display:inline-block; background:#dcfce7; color:#15803d; font-size:13px;
+        padding:8px 18px; border-radius:999px; font-weight:600; }
+  .tip { font-size:12px; color:#94a3b8; margin-top:18px; line-height:1.8; }
+  .tip b { color:#475569; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="cat">🐱</div>
+  <h1>网页测试成功喵！</h1>
+  <div class="sub">这个页面由 bot 目录内的文件发布而来</div>
+
+  <div class="grid">
+    <div class="item"><div class="ico">🔒</div><div class="name">目录安全</div><div class="val">白名单</div></div>
+    <div class="item"><div class="ico">🌐</div><div class="name">公网访问</div><div class="val">隧道</div></div>
+    <div class="item"><div class="ico">📄</div><div class="name">文件来源</div><div class="val">public_html</div></div>
+  </div>
+
+  <div class="ok">✓ 你能看到我，说明链接已经通了喵</div>
+
+  <div class="tip">
+    页面只开放 <b>bot/public_html/</b> 一个目录<br>
+    bot 其它目录（含 settings.json 等敏感配置）全部不可访问<br>
+    <span id="now"></span>
+  </div>
+</div>
+
+<script>
+document.getElementById('now').textContent = '现在是 ' + new Date().toLocaleString('zh-CN');
+</script>
+</body>
+</html>

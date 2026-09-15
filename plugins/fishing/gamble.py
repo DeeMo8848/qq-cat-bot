@@ -16,6 +16,11 @@ from . import core
 
 _SICBO_TYPES = ("大", "小", "单", "双", "豹子")
 
+# 骰宝赔率（Web 后台可改）
+SICBO_BAOZI_MULT = 25      # 豹子 1:25
+SICBO_EVEN_MULT = 2        # 大小单双 1:2
+SICBO_POINT_MULTS = (1, 2, 12)  # 点数出现 1/2/3 次的赔率
+
 
 @register(keywords=["骰宝"], help="🎲 骰宝下注（大/小/单/双/豹子/点数）", role=ROLE_ALL, matcher=core._starts_with("骰宝"))
 async def cmd_sicbo(ctx):
@@ -40,24 +45,24 @@ async def cmd_sicbo(ctx):
     if bet in _SICBO_TYPES:
         if is_same:
             win = (bet == "豹子")
-            mult = 25
+            mult = SICBO_BAOZI_MULT
         elif bet == "大":
             win = 11 <= total <= 17
-            mult = 2
+            mult = SICBO_EVEN_MULT
         elif bet == "小":
             win = 4 <= total <= 10
-            mult = 2
+            mult = SICBO_EVEN_MULT
         elif bet == "单":
             win = total % 2 == 1
-            mult = 2
+            mult = SICBO_EVEN_MULT
         elif bet == "双":
             win = total % 2 == 0
-            mult = 2
+            mult = SICBO_EVEN_MULT
     elif bet.isdigit() and 4 <= int(bet) <= 17:
         cnt = d.count(int(bet))
         if cnt >= 1:
             win = True
-            mult = (1, 2, 12)[cnt - 1]
+            mult = SICBO_POINT_MULTS[cnt - 1]
     else:
         wallet.add(ctx.openid, amount)
         return await ctx.reply_text("类型不对喵：大 / 小 / 单 / 双 / 豹子 / 点数(4-17)")
@@ -78,11 +83,17 @@ async def cmd_sicbo(ctx):
 # 第 n 层奖金 = 投入 × 1.55 × 2^(n-1)，第1层期望微盈利吸引，之后庄家优势递增
 
 _WHEEL_SESSIONS = {}
-_WHEEL_MAX = 10
+
+# 命运之轮参数（Web 后台可改）
+WHEEL_MAX = 10             # 最高层数
+WHEEL_BASE_RATE = 0.65     # 第 1 层成功率
+WHEEL_RATE_STEP = 0.05     # 每层递减
+WHEEL_MIN_RATE = 0.20      # 成功率下限
+WHEEL_FACTOR = 1.55        # 奖金倍率基数
 
 
 def _wheel_rate(level):
-    return max(0.20, 0.65 - 0.05 * (level - 1))
+    return max(WHEEL_MIN_RATE, WHEEL_BASE_RATE - WHEEL_RATE_STEP * (level - 1))
 
 
 @register(keywords=["命运之轮"], help="🎡 高风险轮盘（发「继续挑战/放弃挑战」）", role=ROLE_ALL, matcher=core._starts_with("命运之轮"))
@@ -123,14 +134,14 @@ async def _wheel_turn(ctx):
     level = s["level"]
     rate = _wheel_rate(level)
     if random.random() < rate:
-        s["pot"] = int(s["amount"] * 1.55 * (2 ** (level - 1)))
+        s["pot"] = int(s["amount"] * WHEEL_FACTOR * (2 ** (level - 1)))
         s["level"] += 1
-        if s["level"] > _WHEEL_MAX:
+        if s["level"] > WHEEL_MAX:
             pot = s["pot"]
             amount = s["amount"]
             _WHEEL_SESSIONS.pop(ctx.openid, None)
             return await ctx.reply_text(
-                f"🎡 通关全部 {_WHEEL_MAX} 层！获得 {pot} 喵币"
+                f"🎡 通关全部 {WHEEL_MAX} 层！获得 {pot} 喵币"
                 f"（{pot // amount} 倍）喵！"
             )
         return await ctx.reply_text(
@@ -146,7 +157,7 @@ async def _wheel_turn(ctx):
 
 # ---------- 擦弹（随机倍率） ----------
 
-_ERASER_TABLE = [
+ERASER_TABLE = [
     (0.0, 0.2, 10000), (0.2, 0.5, 18000), (0.5, 0.8, 15000),
     (0.8, 1.2, 25000), (1.2, 2.0, 14100), (2.0, 3.0, 4230),
     (3.0, 6.0, 705), (6.0, 15.0, 106), (15.0, 50.0, 21),
@@ -155,10 +166,10 @@ _ERASER_TABLE = [
 
 
 def _roll_eraser():
-    total_w = sum(w for _lo, _hi, w in _ERASER_TABLE)
+    total_w = sum(w for _lo, _hi, w in ERASER_TABLE)
     r = random.uniform(0, total_w)
     acc = 0
-    for lo, hi, w in _ERASER_TABLE:
+    for lo, hi, w in ERASER_TABLE:
         acc += w
         if r <= acc:
             return random.uniform(lo, hi)
