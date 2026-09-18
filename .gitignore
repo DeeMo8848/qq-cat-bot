@@ -53,6 +53,11 @@ bot/meme/custom_memes/feiyu/__pycache__/
 # 开发期自动生成的代码快照备份（改版前的临时留档，不属于项目资产）
 backups/
 
+# 本地备忘 / 给 AI 看的工作文档（属本机开发资料，非项目资产）
+DIY卡牌计划.md
+卡牌制作测试清单.md
+管理后台测试清单.md
+
 # 其他
 .DS_Store
 Thumbs.db
