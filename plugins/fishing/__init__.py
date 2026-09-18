@@ -5,7 +5,7 @@
 from . import game      # noqa: F401  核心玩法函数
 from . import core      # noqa: F401  命令注册
 from . import gamble    # noqa: F401  赌博小游戏（骰宝/命运之轮/擦弹）
-from . import social    # noqa: F401  社交互动（偷鱼/电鱼/水族箱）
+from . import social    # noqa: F401  社交互动（偷鱼/电鱼/鱼缸）
 from . import auto      # noqa: F401  自动钓鱼
 from . import title     # noqa: F401  自动称号
 from . import config_store  # noqa: F401  启动时应用 data/fishing/config.json 覆盖
@@ -22,5 +22,6 @@ FISHING_CMD_NAMES = {
     "cmd_send_redpack", "cmd_claim_redpack", "cmd_redpack_list",
     "cmd_sicbo", "cmd_wheel", "cmd_wheel_continue", "cmd_wheel_giveup", "cmd_eraser",
     "cmd_steal", "cmd_electric", "cmd_aquarium", "cmd_store_fish", "cmd_take_fish",
+    "cmd_buy_aquarium", "cmd_upgrade_aquarium", "cmd_test_aquarium",
     "cmd_auto_fish", "cmd_stop_auto_fish", "cmd_title",
 }

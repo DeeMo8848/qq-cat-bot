@@ -68,6 +68,14 @@ _CAT_SUB = {"background": "backgrounds", "frame": "frames",
 _CAT_CN = {"background": "背景", "frame": "边框", "seal": "卡封",
            "back": "牌背", "glow": "边框特效"}
 
+# 音频显式声明 MIME：系统 mimetypes 把 .aac 猜成 audio/vnd.dlna.adts，
+# 部分浏览器（Firefox 等）会因这个类型不识别而拒绝播放 → 统一改成标准类型。
+_AUDIO_CT = {
+    ".aac": "audio/aac", ".m4a": "audio/mp4", ".mp3": "audio/mpeg",
+    ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+    ".opus": "audio/ogg", ".flac": "audio/flac",
+}
+
 
 async def _serve(request: web.Request):
     path = _safe_path(request.match_info.get("path", ""))
@@ -77,7 +85,8 @@ async def _serve(request: web.Request):
         path = os.path.join(path, "index.html")
     if not os.path.isfile(path):
         return web.Response(status=404, text="404 找不到喵")
-    return web.FileResponse(path)
+    ct = _AUDIO_CT.get(os.path.splitext(path)[1].lower())
+    return web.FileResponse(path, headers={"Content-Type": ct} if ct else None)
 
 
 # ---------- 卡牌页面 ----------
@@ -188,6 +197,94 @@ async def _api_materials(request: web.Request):
     return web.json_response({"ok": True, "cats": cats})
 
 
+# ---------- 鱼缸页面 ----------
+
+_AQUA_WEB_DIR = os.path.join(PUBLIC_DIR, "aquarium")
+
+# 测试鱼缸的演示数据：(fid, 名称, emoji, 稀有度, 数量)，覆盖全稀有度含一条黄金鱼
+_TEST_AQUARIUM = [
+    ("f_goldfish", "金鱼", "⚪", "common", 3),
+    ("f_neon_tetra", "霓虹灯鱼", "⚪", "common", 2),
+    ("f_cherry_shrimp", "樱桃虾", "🟢", "rare", 2),
+    ("f_discus", "七彩神仙", "🟣", "epic", 2),
+    ("f_koi", "锦鲤", "🔴", "legend", 2),
+    ("f_polka_dot_stingray", "斑点魟", "🟡", "myth", 1),
+    ("f_goldfish_gold", "✨黄金 金鱼", "⚪", "common", 1),
+]
+
+
+async def _aquarium_page(request: web.Request):
+    """鱼缸页：有效 userKey / test 返回同一份模板页；其余路径按静态资源处理。"""
+    key = request.match_info["key"]
+    if key == "test" or _KEY_RE.match(key or ""):
+        p = os.path.join(_AQUA_WEB_DIR, "index.html")
+        if os.path.isfile(p):
+            return web.FileResponse(p)
+    path = _safe_path("aquarium/" + key)
+    if path and os.path.isfile(path):
+        return web.FileResponse(path)
+    return web.Response(status=404, text="404 找不到喵")
+
+
+def _species_weight_range(fid):
+    """取鱼种重量区间 (wmin, wmax)；黄金鱼去掉 _gold 后缀查本体，未知返回 None。"""
+    from plugins.fishing import game
+    base = fid[:-5] if fid.endswith("_gold") else fid
+    f = game.FISH.get(base)
+    return f[4] if f else None
+
+
+async def _api_aquarium(request: web.Request):
+    from plugins.fishing import core as fish_core
+    from plugins.cards import carddata as cd
+    ukey = request.match_info["key"]
+    if ukey == "test":
+        # 测试鱼缸：按「数量」在种内重量区间均匀取几条固定重量 → 每条鱼一个重量/一个大小，
+        # 画面条数 = 计数一致（如金鱼 3 条分别取 30 / 116 / 203 g）
+        fish_list = []
+        for fid, n, e, r, c in _TEST_AQUARIUM:
+            rng = _species_weight_range(fid)
+            wmin, wmax = rng if rng else (30, 200)
+            if c <= 1:
+                ws = [round((wmin + wmax) / 2)]
+            else:
+                ws = [round(wmin + (wmax - wmin) * i / (c - 1)) for i in range(c)]
+            fish_list.append({"id": fid, "name": n, "emoji": e, "rarity": r,
+                              "count": c, "gold": "gold" in fid,
+                              "weights": ws, "wmin": wmin, "wmax": wmax})
+        return web.json_response({"ok": True, "fish": fish_list, "mult": 1.0,
+                                  "capacity": {"current": sum(len(x["weights"]) for x in fish_list),
+                                               "max": 200}})
+    if not _KEY_RE.match(ukey or ""):
+        return web.json_response({"ok": False, "msg": "not found"})
+    oid = cd.openid_by_key(ukey)
+    if not oid:
+        return web.json_response({"ok": False, "msg": "not found"})
+    data = fish_core._load()
+    u = fish_core._user(data, oid)
+    aqua = u.get("aquarium", {})
+    fish_list = []
+    total = 0
+    for fid, weights in aqua.items():
+        try:
+            name, emoji, rr, _base, _w, _z = fish_core.game.FISH[fid]
+        except KeyError:
+            continue
+        cnt = len(weights)
+        total += cnt
+        fish_list.append({"id": fid, "name": name, "emoji": emoji,
+                          "rarity": rr, "count": cnt, "gold": "gold" in fid,
+                          "weights": weights, "wmin": _w[0], "wmax": _w[1]})
+    # 用户的鱼线重量倍率：抽鱼时重量会被放大（最高 1.8 倍），会超出鱼种区间上限。
+    # 前端按它把重量还原成"基准重量"再算尺寸，否则约 55% 的鱼会顶格成同一尺寸
+    # （表现为「1000g 和 3000g 的鱼差不多大」）。
+    line_lv = int(u.get("line", 1) or 1)
+    mult = float(fish_core.game.LINES.get(line_lv, fish_core.game.LINES[1])[2])
+    return web.json_response({"ok": True, "fish": fish_list, "mult": mult,
+                              "capacity": {"current": total,
+                                           "max": int(u.get("aquarium_limit", 0))}})
+
+
 async def start_static(port: int = STATIC_PORT):
     """启动静态页面服务，返回 (runner, site)；目录不存在时自动创建。"""
     os.makedirs(PUBLIC_DIR, exist_ok=True)
@@ -202,6 +299,8 @@ async def start_static(port: int = STATIC_PORT):
     app.router.add_get("/api/album/{key}", _api_album)
     app.router.add_get("/api/market", _api_market)
     app.router.add_get("/api/materials", _api_materials)
+    app.router.add_get("/aquarium/{key}", _aquarium_page)
+    app.router.add_get("/api/aquarium/{key}", _api_aquarium)
     app.router.add_get("/{path:.*}", _serve)
     runner = web.AppRunner(app)
     await runner.setup()

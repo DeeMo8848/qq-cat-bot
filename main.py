@@ -15,6 +15,7 @@ import time
 import botpy
 
 from bot import commands  # noqa: F401  确保命令模块加载
+from bot.core import vpn_bypass
 from bot.core.sender import Sender
 from bot.core.static_server import start_static
 from bot.core.tunnel import TunnelManager
@@ -98,6 +99,10 @@ async def main():
     # 启动 cloudflared 内网穿透（自动，非阻塞），供开放平台回调使用
     tunnel = TunnelManager(WEBHOOK_PORT)
     tunnel.start()
+
+    # 保障「本机翻墙」与「隧道」共存：把 cloudflared 出站流量在代理内核里固定为直连
+    # （否则 VPN 的 TUN 模式会把隧道流量丢给代理节点，bot 会在线的同时收不到消息）
+    vpn_bypass.start_auto()
 
     # 启动本地 Web 后台（与机器人同进程、同事件循环，始终可访问）
     runner, site = await start_webui(bot, port=WEBUI_PORT, tunnel=tunnel)

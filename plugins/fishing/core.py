@@ -28,7 +28,7 @@ _lock = threading.Lock()
 
 _RARITY_CN = game.RARITIES
 _RARITY_EMOJI = {
-    "common": "⚪", "fine": "🟢", "rare": "🔵", "epic": "🟣", "legend": "🔴",
+    "common": "⚪", "rare": "🟢", "epic": "🟣", "legend": "🔴", "myth": "🟡",
 }
 _ROD_NAMES = {lv: name for lv, (name, _p) in game.RODS.items()}
 _HOOK_NAMES = {lv: name for lv, (name, _p, _b) in game.HOOKS.items()}
@@ -39,6 +39,36 @@ FISH_CD = 45              # 抛竿冷却（秒）
 GACHA_COST = 300          # 扭蛋单抽费用
 TOTAL_SPECIES = len(game.FISH)
 JACKPOT_REWARD = 20000    # 集齐全部鱼种的一次性大奖
+
+# 鱼类图片：id → 素材目录名 来自鱼缸网页的 fish_data.js（惰性加载）
+_AQUA_IMG_DIR = os.path.join(ROOT, "bot", "public_html", "aquarium", "images")
+_FISH_SLUGS = None
+
+
+def _fish_slugs():
+    global _FISH_SLUGS
+    if _FISH_SLUGS is None:
+        _FISH_SLUGS = {}
+        try:
+            p = os.path.join(ROOT, "bot", "public_html", "aquarium", "fish_data.js")
+            txt = open(p, encoding="utf-8-sig").read()
+            m = re.search(r"window\.FISH_DATA\s*=\s*(\[.*\])\s*;", txt, re.S)
+            if m:
+                for it in json.loads(m.group(1)):
+                    _FISH_SLUGS[it["id"]] = it["slug"]
+        except Exception:
+            _FISH_SLUGS = {}
+    return _FISH_SLUGS
+
+
+def _fish_image(fid, gold=False):
+    """鱼类图片本地路径；无对应图片返回空串。"""
+    slug = _fish_slugs().get(fid)
+    if not slug:
+        return ""
+    p = os.path.join(_AQUA_IMG_DIR, slug, "gold.png" if gold else "Adult.png")
+    return p if os.path.isfile(p) else ""
+
 
 # ---------- 附魔词条（MC 附魔台 + 二游词条风格） ----------
 # 部位 -> [(key, 名称, 说明)]；附魔随机抽 1-3 个不重复词条，等级 1-3 随机
@@ -65,6 +95,42 @@ ENCHANT_INFO = {
 ENCHANT_COST = 5000       # 随机附魔费用
 UNENCHANT_COST = 1000     # 洗去附魔费用
 
+# 钓鱼失败趣味台词（随机一条；第一条保留上钩率引导，其余为搞笑"垃圾"）
+FAIL_LINES = [
+    "🐟 鱼咬钩又跑啦…升级鱼漂或饵钓附魔能提高上钩率喵",
+    "🥢 钓上来一根泡水的木棍，随手扔回河里喵",
+    "👟 钓上来一只破鞋子，里面还住着只小螃蟹在抗议喵",
+    "🦴 钓上来一根鱼骨头，像是被啃完又吐回来的喵",
+    "🛍️ 钓上来一个垃圾袋，抖开全是剩菜叶子喵",
+    "🥫 钓上来一个易拉罐，晃了晃还剩半罐汽水喵",
+    "🌿 鱼钩被水草缠了个严实，解开时鱼早溜走啦喵",
+    "🌊 鱼线猛地下沉！拉上来竟是一位河神——可惜他一个猛子扎回水里跑掉了喵",
+]
+RIVER_GOD_CHANCE = 0.03   # 钓鱼失败时触发河神祝福的概率（极小概率彩蛋）
+RIVER_GOD_COIN = 888      # 附魔已全满时河神给的喝茶钱
+
+
+def _river_god_bless(u, rng):
+    """河神祝福：随机选钓竿/鱼漂，优先随机升级一项已有附魔（上限 III），
+    无附魔或已全满级则新增一项随机词条（1 级）；该部位 3 词条全满级则换另一部位。
+    返回 (部位中文, 词条key, 新等级, 是否升级)；两部位都全满返回 None。"""
+    ench = u.setdefault("ench", {})
+    parts = [("rod", "钓竿", ENCHANT_POOL["rod"]), ("float", "鱼漂", ENCHANT_POOL["float"])]
+    rng.shuffle(parts)
+    for pkey, pcn, pool in parts:
+        cur = ench.setdefault(pkey, {})
+        upgradable = [k for k, lv in cur.items() if lv < 3]
+        if upgradable:
+            k = rng.choice(upgradable)
+            cur[k] += 1
+            return pcn, k, cur[k], True
+        if len(cur) < 3:
+            existing = set(cur)
+            k = rng.choice([kk for kk, _n, _d in pool if kk not in existing])
+            cur[k] = 1
+            return pcn, k, 1, False
+    return None
+
 
 def _load() -> dict:
     if os.path.exists(_DATA_FILE):
@@ -90,6 +156,8 @@ def _user(data, openid) -> dict:
     u.setdefault("hook", 1)
     u.setdefault("line", 1)
     u.setdefault("float", 1)
+    u.setdefault("auto_machine", 0)
+    u.setdefault("aquarium_limit", 0)   # 鱼缸容量（0=未购买，买「鱼缸」后获得）
     u.setdefault("ench", {"rod": {}, "float": {}})
     u.setdefault("baits", {"bait1": 0, "bait2": 0})
     u.setdefault("inventory", {})
@@ -135,13 +203,16 @@ def _record_catch(u, fish, oid):
     if fish["rarity"] == "legend":
         st["legend_seen"] = 1
     u.setdefault("inventory", {}).setdefault(fish["id"], []).append(fish["weight_g"])
+    if fish.get("gold"):
+        u.setdefault("gold_inventory", {}).setdefault(fish["id"], []).append(fish["weight_g"])
+        u["inventory"][fish["id"]].pop()  # 黄金鱼单独存放，不进普通背包
     codex = u.setdefault("codex", {})
     is_new = fish["id"] not in codex
     codex[fish["id"]] = codex.get(fish["id"], 0) + 1
     info = {"is_new": is_new, "first_bonus": 0, "jackpot": False}
     if is_new:
         base = game.FISH[fish["id"]][3]
-        info["first_bonus"] = base * 4
+        info["first_bonus"] = max(1, base * 4 // 10)   # 首次发现奖励：原 base*4 缩一位数（÷10）
         wallet.add(oid, info["first_bonus"])
     if len(codex) >= TOTAL_SPECIES and not u.get("codex_full"):
         u["codex_full"] = 1
@@ -184,8 +255,23 @@ async def cmd_fish(ctx):
         treasure = float_ench.get("treasure", 0)
         if random.random() > game.hook_rate(flt, lure):
             u["last_fish"] = now
+            msg = random.choice(FAIL_LINES)
+            if random.random() < RIVER_GOD_CHANCE:
+                b = _river_god_bless(u, random)
+                if b is None:
+                    msg = ("🌊 河神缓缓浮出水面：\n"
+                           "「你已集满所有机缘，那便赐你喝茶钱吧！」\n"
+                           f"💰 +{RIVER_GOD_COIN} 喵喵币")
+                    wallet.add(ctx.openid, RIVER_GOD_COIN)
+                else:
+                    part_cn, k, lv, upgraded = b
+                    name, desc = ENCHANT_INFO[k]
+                    verb = "附魔升级" if upgraded else "获得附魔"
+                    msg = ("🌊 金光一闪，河神缓缓浮出水面：\n"
+                           "「你掉的鱼没捞着，机缘倒是捞到一份！」\n"
+                           f"✨ {part_cn}{verb}：{name} {game.ENCHANT_LV_CN[lv]}（{desc}）")
             _save(data)
-            return await ctx.reply_text("🐟 鱼咬钩又跑啦…升级鱼漂或饵钓附魔能提高上钩率喵")
+            return await ctx.reply_text(msg)
         fish = game.roll_fish(rod, has_bait, hook_lv=hook, line_lv=line,
                               fortune_lv=fortune, luck_lv=luck)
         if treasure:
@@ -253,6 +339,21 @@ async def cmd_inventory(ctx):
         lines.append(
             f"{emoji} {name} ×{cnt}  {_RARITY_EMOJI[rr]}{_RARITY_CN[rr]}  ≈{val}币"
         )
+    gold_inv = u.get("gold_inventory", {})
+    gold_n = 0
+    gold_val = 0
+    for fid, weights in gold_inv.items():
+        try:
+            name, _e, _rr, base, _w, _z = game.FISH[fid]
+        except KeyError:
+            continue
+        cnt = len(weights)
+        gold_n += cnt
+        gval = sum(int((base + int(w / 8)) * game.GOLD_MULT) for w in weights)
+        gold_val += gval
+        lines.append(f"{game.GOLD_PREFIX}{name} ×{cnt}  ≈{gval}币")
+    total_n += gold_n
+    total += gold_val
     lines.append(f"　合计：{total_n} 条 · 估值 {total} 喵喵币")
     return await ctx.reply_text(
         f"🎒 我的鱼获：\n" + "\n".join(lines) +
@@ -291,6 +392,20 @@ async def cmd_shop(ctx):
         f"· 洗附魔 <钓竿|鱼漂>：{UNENCHANT_COST}币，洗去该部位附魔",
         "· 钓竿词条：时运/海之眷顾/丰收 · 鱼漂词条：饵钓/双钩/聚宝",
     ]
+    machine_lines = []
+    for lv in sorted(game.AUTO_MACHINES):
+        name, price, imin, srate, hours = game.AUTO_MACHINES[lv]
+        machine_lines.append(
+            f"· 第{lv}级 {name} — {price} 喵币"
+            f"（{imin}分钟/竿 · 成功率{srate * 100:.0f}% · 最长{hours}小时）")
+    aquarium_lines = []
+    for lv in sorted(game.AQUARIUM_TANKS):
+        name, price, cap = game.AQUARIUM_TANKS[lv]
+        if lv == 1:
+            aquarium_lines.append(f"· {name} — {price} 喵币（容量 {cap} 条）")
+        else:
+            aquarium_lines.append(
+                f"· 升级{lv - 1}次 → {name} — {price} 喵币（容量 {cap} 条）")
     return await ctx.reply_text(
         "🏪 鱼具店：\n"
         "🎣 钓竿\n" + "\n".join(rod_lines) + "\n"
@@ -299,8 +414,11 @@ async def cmd_shop(ctx):
         "🎈 鱼漂（上钩率）\n" + "\n".join(float_lines) + "\n"
         "🪱 鱼饵\n" + "\n".join(bait_lines) + "\n"
         "✨ 附魔\n" + "\n".join(ench_lines) + "\n"
+        "🤖 自动钓鱼机（挂机收益，可升级）\n" + "\n".join(machine_lines) + "\n"
+        "🐠 鱼缸（观赏防偷，可升级）\n" + "\n".join(aquarium_lines) + "\n"
         "买法：买鱼竿 <1-5> · 买鱼钩 <2-6> · 买鱼线 <2-6> · 买鱼漂 <2-6> · "
-        "买鱼饵 <数量> · 买高级鱼饵 <数量> · 附魔 <部位>"
+        "买鱼饵 <数量> · 买高级鱼饵 <数量> · 附魔 <部位> · "
+        "买钓鱼机 · 升级钓鱼机 · 买鱼缸 · 升级鱼缸"
     )
 
 
@@ -316,6 +434,16 @@ def _strip_cmd(ctx, *kws):
         if t.startswith(kw):
             return t[len(kw):].strip()
     return t
+
+
+def _is_buy_fish(text):
+    """「买鱼」触发匹配：仅接受 买鱼 / 买鱼 <单号> / 买鱼<单号>，
+    避免 买鱼缸/买鱼竿/买鱼钩/买鱼线/买鱼漂/买鱼饵 被「买鱼」前缀抢先命中。"""
+    t = (text or "").strip()
+    if not t.startswith("买鱼"):
+        return False
+    rest = t[len("买鱼"):]
+    return rest == "" or rest[0] == " " or rest[0].isdigit()
 
 
 def _sender_name(ctx) -> str:
@@ -556,27 +684,39 @@ async def cmd_sell(ctx):
         u = _user(data, ctx.openid)
         inv = u["inventory"]
         mine = inv.get(target_id, [])
-        if not mine:
+        gold_mine = u.setdefault("gold_inventory", {}).get(target_id, [])
+        if not mine and not gold_mine:
             return await ctx.reply_text(f"你的背包里没有「{game.FISH[target_id][0]}」喵")
-        if qty > len(mine):
-            qty = len(mine)
-        weights = mine[:qty]
+        if qty > len(mine) + len(gold_mine):
+            qty = len(mine) + len(gold_mine)
+        # 先卖普通，不足再用黄金鱼补足（黄金鱼单独计 5 倍价）
         base = game.FISH[target_id][3]
-        earned = sum(base + int(w / 8) for w in weights)
+        normal_sell = mine[:qty]
+        rest = qty - len(normal_sell)
+        gold_used = gold_mine[:rest] if rest > 0 else []
+        sold_normal = len(normal_sell)
+        sold_gold = len(gold_used)
+        earned = sum(base + int(w / 8) for w in normal_sell)
+        earned += sum(int((base + int(w / 8)) * game.GOLD_MULT) for w in gold_used)
         harvest = u.get("ench", {}).get("rod", {}).get("harvest", 0)
         if harvest:
             earned = int(earned * (1 + 0.1 * harvest))
-        del mine[:qty]
+        del mine[:sold_normal]
+        del gold_mine[:sold_gold]
         if not mine:
             inv.pop(target_id, None)
+        if not gold_mine:
+            u["gold_inventory"].pop(target_id, None)
         _stat(u)["sold_earn"] += earned
         new_ach = _check_achievements(u, ctx.openid)
         _save(data)
 
     wallet.add(ctx.openid, earned)
     name = game.FISH[target_id][0]
+    cnt = sold_normal + sold_gold
     lines = [
-        f"💰 卖出 {name} ×{qty}，赚得 **{earned}** {wallet.COIN}喵！",
+        f"💰 卖出 {name} ×{cnt}" + (f"（含 ✨黄金 ×{sold_gold}）" if sold_gold else "") +
+        f"，赚得 **{earned}** {wallet.COIN}喵！",
         f"当前余额：{wallet.balance(ctx.openid)} 喵喵币",
     ]
     lines += [f"🏅 达成成就「{n}」+{r}喵币！" for n, r in new_ach]
@@ -590,7 +730,8 @@ async def cmd_sell_all(ctx):
         data = _load()
         u = _user(data, ctx.openid)
         inv = u["inventory"]
-        if not inv:
+        gold_inv = u.get("gold_inventory", {})
+        if not inv and not gold_inv:
             return await ctx.reply_text("🎒 鱼获空空如也，先发「开始钓鱼」捞一竿喵！")
         harvest = u.get("ench", {}).get("rod", {}).get("harvest", 0)
         total_n = 0
@@ -608,7 +749,20 @@ async def cmd_sell_all(ctx):
             total_n += cnt
             earned += val
             detail.append(f"{emoji}{name} ×{cnt} ≈{val}币")
+        for fid, weights in list(gold_inv.items()):
+            try:
+                name, _e, _rr, base, _w, _z = game.FISH[fid]
+            except KeyError:
+                continue
+            cnt = len(weights)
+            val = sum(int((base + int(w / 8)) * game.GOLD_MULT) for w in weights)
+            if harvest:
+                val = int(val * (1 + 0.1 * harvest))
+            total_n += cnt
+            earned += val
+            detail.append(f"{game.GOLD_PREFIX}{name} ×{cnt} ≈{val}币")
         u["inventory"] = {}
+        u["gold_inventory"] = {}
         _stat(u)["sold_earn"] += earned
         new_ach = _check_achievements(u, ctx.openid)
         _save(data)
@@ -681,8 +835,9 @@ async def cmd_gacha(ctx):
         info = _record_catch(u, fish, oid)
         new_ach = _check_achievements(u, oid)
         _save(data)
+    nick = _sender_name(ctx) or "你"
     lines = [
-        f"🎰 你花了 {GACHA_COST} 喵币，扭蛋转啊转…",
+        f"🎰 {nick}花了 {GACHA_COST} 喵币，扭蛋转啊转…",
         f"{fish['emoji']} 抽到：{fish['name']}！",
         f"{_RARITY_EMOJI[fish['rarity']]} {_RARITY_CN[fish['rarity']]} · 重 {game.fmt_weight(fish['weight_g'])} · 值 {fish['value']} 喵币（可卖）",
     ]
@@ -690,7 +845,11 @@ async def cmd_gacha(ctx):
         lines.append(f"✨ 图鉴新纪录！首次发现奖励 +{info['first_bonus']} 喵币")
     if info["jackpot"]:
         lines.append(f"🏆🎉 集齐全部 {TOTAL_SPECIES} 种！大奖 +{JACKPOT_REWARD} 喵币！")
-    return await ctx.reply_text("\n".join(lines))
+    text = "\n".join(lines)
+    img = _fish_image(fish["id"], fish.get("gold", False))
+    if img:
+        return await ctx.sender.send_image_with_text(ctx.message, text, img)
+    return await ctx.reply_text(text)
 
 
 # ---------- 命令：钓鱼成就 ----------
@@ -835,7 +994,7 @@ async def cmd_list_fish(ctx):
     )
 
 
-@register(keywords=["买鱼"], help="", role=ROLE_ALL, matcher=_starts_with("买鱼"))
+@register(keywords=["买鱼"], help="", role=ROLE_ALL, matcher=_is_buy_fish)
 async def cmd_buy_fish(ctx):
     n_txt = _strip_cmd(ctx, "买鱼")
     if not n_txt.isdigit():

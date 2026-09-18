@@ -16,14 +16,19 @@ from bot import commands
 from plugins import randomimg
 from bot.core import state
 from bot.ai import ai as ai_mod
-from config import WEBUI_PORT, WHITELIST_IPS, ROOT
+from config import WEBUI_PORT, ROOT
 
-# 公网 IP 查询源（按顺序尝试）
+# 公网 IP 查询源（按顺序尝试；国内源在前，开代理/VPN 时比国际源稳得多）
 _IP_PROVIDERS = [
-    "https://api.ip.sb/ip",
+    "https://myip.ipip.net",
+    "https://ip.3322.net",
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
+    "https://api.ip.sb/ip",
 ]
+
+# 从各家返回值里抠出 IPv4（有的源是纯 IP，有的带「当前 IP：x.x.x.x 来自于：…」这类包装）
+_IP_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
 _LOG_FILE = os.path.join(ROOT, "botpy.log")
 
@@ -123,6 +128,7 @@ class WebUI:
         self.app.router.add_get("/api/randomimg/preview", self.randomimg_preview)
         self._ip = None
         self._ip_time = 0.0
+        self._ip_error_time = 0.0
 
     # ---------- 页面 ----------
     async def index(self, request):
@@ -135,7 +141,6 @@ class WebUI:
     # ---------- API ----------
     async def status(self, request):
         ip = await self._current_ip()
-        ip_ok = ip in WHITELIST_IPS
         rand_names = randomimg.RANDOMIMG_CMD_NAMES
         (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES, CARD_CMD_NAMES) = _module_groups()
         rand_cmds = [f for f in commands._COMMANDS if f.__name__ in rand_names]
@@ -215,8 +220,6 @@ class WebUI:
             "bot_id": getattr(robot, "id", "-"),
             "last_ready": getattr(self.bot, "last_ready", None),
             "ip": ip,
-            "ip_ok": ip_ok,
-            "whitelist_ips": WHITELIST_IPS,
             "tunnel_url": tunnel_url,
             "tunnel_running": tunnel_running,
             "commands": commands_list,
@@ -365,15 +368,28 @@ class WebUI:
 
         供独立预览网页（如「qqbot - 副本」里的预览工具）通过 <img> 直接展示，
         从而绕开浏览器跨域限制。失败返回 502 + 文案，网页端显示「api死了喵」。
+
+        跨域：仅对来自本机的页面（file:// 的 Origin: null / file://、127.0.0.1 / localhost）
+        放行 Access-Control-Allow-Origin，让预览页能用 fetch 拿到图片字节，
+        实现「保存的正是当前这张图」。其他来源不回显，避免任意网站读取本机接口。
+        注：file:// 页面用 "*"（回显 "null" 在部分启动参数下会被浏览器判为不匹配）。
         """
+        headers = {"Cache-Control": "no-store"}
+        origin = request.headers.get("Origin", "")
+        if origin in ("null", "file://", ""):
+            headers["Access-Control-Allow-Origin"] = "*"
+        elif origin.startswith("http://127.0.0.1") or origin.startswith("http://localhost"):
+            headers["Access-Control-Allow-Origin"] = origin
+            headers["Vary"] = "Origin"
+        headers["Access-Control-Allow-Methods"] = "GET, HEAD"
         source = request.query.get("source", "")
         if not source:
-            return web.Response(status=400, text="缺少 source 参数")
+            return web.Response(status=400, text="缺少 source 参数", headers=headers)
         q = {k: v for k, v in request.query.items()}
         data, ctype = await randomimg.fetch_preview_image(source, **q)
         if not data:
-            return web.Response(status=502, text="api死了喵")
-        return web.Response(body=data, content_type=ctype or "image/jpeg")
+            return web.Response(status=502, text="api死了喵", headers=headers)
+        return web.Response(body=data, content_type=ctype or "image/jpeg", headers=headers)
 
     async def shutdown(self, request):
         """关闭机器人并退出程序（优雅关闭 + 兜底强制退出）。"""
@@ -550,21 +566,30 @@ class WebUI:
 
     # ---------- 内部工具 ----------
     async def _current_ip(self):
-        """获取当前公网出口 IP（带 60 秒缓存）。"""
-        if self._ip and time.time() - self._ip_time < 60:
+        """获取当前公网出口 IP（成功缓存 60 秒；失败也缓存 60 秒，避免面板每次刷新都白等）。"""
+        now = time.time()
+        if self._ip and now - self._ip_time < 60:
             return self._ip
+        if now - self._ip_error_time < 60 and self._ip_error_time:
+            return self._ip or "获取失败"
         import aiohttp
-        async with aiohttp.ClientSession() as session:
-            for url in _IP_PROVIDERS:
-                try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        text = (await resp.text()).strip()
-                        if text and text[0].isdigit():
-                            self._ip = text
-                            self._ip_time = time.time()
-                            return text
-                except Exception:
-                    continue
+        try:
+            async with aiohttp.ClientSession() as session:
+                for url in _IP_PROVIDERS:
+                    try:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                            text = (await resp.text()).strip()
+                            m = _IP_RE.search(text)
+                            if m:
+                                self._ip = m.group(1)
+                                self._ip_time = now
+                                self._ip_error_time = 0.0
+                                return self._ip
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        self._ip_error_time = now
         return self._ip or "获取失败"
 
     def _log_tail(self, n):
@@ -666,10 +691,9 @@ PAGE_HTML = """<!DOCTYPE html>
       </div>
     </div>
     <div class="card">
-      <h2>网络 / 白名单</h2>
+      <h2>网络</h2>
       <div>当前公网 IP：<b id="cur-ip">-</b></div>
-      <div style="margin-top:6px" id="ip-status">检测中…</div>
-      <div class="tip">公网 IP 变化后需到开放平台「IP 白名单」更新</div>
+      <div class="tip">如需开启白名单可自行在官方机器人后台添加此 IP</div>
     </div>
     <div class="card">
       <h2>内网穿透 / 回调地址</h2>
@@ -874,7 +898,7 @@ PAGE_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="card" style="margin-bottom:16px">
-    <h2>🐱 社交互动（偷鱼 / 电鱼 / 水族箱）与 🎣 自动钓鱼</h2>
+    <h2>🐱 社交互动（偷鱼 / 电鱼 / 鱼缸）与 🎣 自动钓鱼</h2>
     <div class="ad-grid" id="fish-social-auto">加载中…</div>
     <div class="ad-btns">
       <button onclick="saveFishSocialAuto()">保存社交/自动</button>
@@ -929,9 +953,6 @@ async function refresh(){
     document.getElementById('bot-id').textContent = d.bot_id;
     document.getElementById('bot-ready').textContent = d.last_ready || '-';
     document.getElementById('cur-ip').textContent = d.ip;
-    const ipst = document.getElementById('ip-status');
-    if(d.ip_ok){ ipst.innerHTML = '<span class="ip-ok">✓ 已在白名单</span>'; }
-    else { ipst.innerHTML = '<span class="ip-bad">✗ 未在白名单，机器人无法上线</span>'; }
     const tst = document.getElementById('tunnel-status');
     if(d.tunnel_running){ tst.innerHTML = '<span class="ip-ok">● 运行中</span>'; }
     else { tst.innerHTML = '<span class="ip-bad">○ 未运行</span>'; }
@@ -1357,10 +1378,10 @@ const SOC_FIELDS = [
   ['steal_cooldown','偷鱼冷却（秒）'], ['steal_rate','偷鱼成功率（0.35=35%）'],
   ['electric_cost','电鱼电费'], ['electric_rate','电鱼成功率（0.65）'],
   ['electric_fine','电鱼失败罚款'], ['electric_cooldown','电鱼冷却（秒）'],
-  ['aquarium_limit','水族箱容量上限'],
+  ['aquarium_limit','基础鱼缸容量（买「鱼缸」后获得）'],
 ];
 const AUTO_FIELDS = [
-  ['interval','自动钓鱼间隔（秒）'], ['cost','自动钓鱼启动费'], ['max_hours','自动钓鱼最大时长（小时）'],
+  ['cost','自动钓鱼启动费'],  // 间隔/成功率/最大时长已由「自动钓鱼机」等级决定（游戏内升级）
 ];
 const GEAR_CFG = [
   {sec:'rods',   cn:'🎣 钓竿', keyL:'等级', keyIsLv:true,  num:[['price','价格']],                       dict:[],                  note:''},

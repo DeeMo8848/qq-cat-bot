@@ -1,12 +1,13 @@
 ﻿# -*- coding: utf-8 -*-
-"""🐟 钓鱼插件 · 社交互动（偷鱼 / 电鱼 / 水族箱）。
+"""🐟 钓鱼插件 · 社交互动（偷鱼 / 电鱼 / 鱼缸）。
 纯虚拟喵喵币娱乐，不涉及真实资金。资金统一走 bot.core.wallet。"""
 
 import random
 import time
 
-from bot.commands import register, ROLE_ALL
+from bot.commands import register, ROLE_ALL, ROLE_ADMIN
 from bot.core import wallet
+from config import STATIC_PUBLIC_URL
 from . import core
 from . import game
 
@@ -16,7 +17,7 @@ ELECTRIC_COST = 300        # 电鱼电费
 ELECTRIC_RATE = 0.65       # 电鱼成功率
 ELECTRIC_FINE = 200        # 电鱼失败天罚罚款
 ELECTRIC_COOLDOWN = 300    # 电鱼冷却（秒，5 分钟）
-AQUARIUM_LIMIT = 50        # 水族箱容量上限
+AQUARIUM_LIMIT = 60        # 基础鱼缸容量（买「鱼缸」后获得；升级走 game.AQUARIUM_TANKS，Web 后台可调）
 
 
 def _target_oid(ctx):
@@ -67,7 +68,7 @@ async def cmd_steal(ctx):
         tu = core._user(data, target)
         stealable = {fid: ws for fid, ws in tu.get("inventory", {}).items() if ws}
         if not stealable:
-            return await ctx.reply_text("🐱 对方背包里没有鱼可偷喵（水族箱里的偷不到）")
+            return await ctx.reply_text("🐱 对方背包里没有鱼可偷喵（鱼缸里的偷不到）")
         if random.random() > STEAL_RATE:
             u["last_steal"] = now
             core._save(data)
@@ -141,35 +142,25 @@ async def cmd_electric(ctx):
     return await ctx.reply_text("\n".join(lines))
 
 
-# ---------- 水族箱（防偷存储） ----------
+# ---------- 鱼缸（观赏，可防偷） ----------
 
-@register(keywords=["水族箱"], help="🐠 查看水族箱（防偷存储）", role=ROLE_ALL, exact=True)
+@register(keywords=["鱼缸"], help="🐠 查看我的鱼缸（观赏，可防偷）", role=ROLE_ALL, exact=True)
 async def cmd_aquarium(ctx):
     with core._lock:
         data = core._load()
         u = core._user(data, ctx.openid)
-        aqua = u.setdefault("aquarium", {})
-    if not aqua:
-        return await ctx.reply_text(
-            "🐠 水族箱空空如也，发「存鱼 <鱼名> <数量>」把鱼存进来防偷喵！"
-        )
-    lines = []
-    total = 0
-    total_n = 0
-    for fid, weights in aqua.items():
-        try:
-            name, emoji, rr, base, _w, _z = game.FISH[fid]
-        except KeyError:
-            continue
-        cnt = len(weights)
-        total_n += cnt
-        val = sum(base + int(w / 8) for w in weights)
-        total += val
-        lines.append(f"{emoji} {name} ×{cnt}  {core._RARITY_EMOJI[rr]}{core._RARITY_CN[rr]}  ≈{val}币")
-    lines.append(f"　合计：{total_n} 条 · 估值 {total} 喵喵币（{total_n}/{AQUARIUM_LIMIT}）")
-    return await ctx.reply_text(
-        "🐠 我的水族箱：\n" + "\n".join(lines) + "\n发「取鱼 <鱼名> <数量>」可取出喵"
-    )
+        if int(u.get("aquarium_limit", 0)) <= 0:
+            return await ctx.reply_text("你还没有鱼缸喵，鱼具店发「买鱼缸」买一个（容量 60 条，可升级）")
+    from plugins.cards import carddata as cd
+    nick = core._sender_name(ctx)
+    rec = cd.album(ctx.openid, nick or "我的鱼缸")
+    head = "🐠 " + (nick + "的鱼缸：" if nick else "我的鱼缸：")
+    return await ctx.reply(head + "\n" + STATIC_PUBLIC_URL + "/aquarium/" + rec["key"])
+
+
+@register(keywords=["测试鱼缸"], help="🐠 展示测试用鱼缸（仅管理员）", role=ROLE_ADMIN, exact=True)
+async def cmd_test_aquarium(ctx):
+    return await ctx.reply(f"🐠 测试鱼缸\n{STATIC_PUBLIC_URL}/aquarium/test")
 
 
 @register(keywords=["存鱼"], help="", role=ROLE_ALL, matcher=core._starts_with("存鱼"))
@@ -197,11 +188,14 @@ async def cmd_store_fish(ctx):
         if qty > len(mine):
             qty = len(mine)
         aqua = u.setdefault("aquarium", {})
-        cur = sum(len(ws) for ws in aqua.values())
-        if cur + qty > AQUARIUM_LIMIT:
+        limit = int(u.get("aquarium_limit", 0))
+        if limit <= 0:
             return await ctx.reply_text(
-                f"水族箱容量上限 {AQUARIUM_LIMIT} 条，已放 {cur} 条喵"
-            )
+                "你还没有鱼缸喵，鱼具店发「买鱼缸」买一个（容量 60 条，可升级）")
+        cur = sum(len(ws) for ws in aqua.values())
+        if cur + qty > limit:
+            return await ctx.reply_text(
+                f"鱼缸容量上限 {limit} 条，已放 {cur} 条喵，发「升级鱼缸」扩容")
         weights = mine[:qty]
         del mine[:qty]
         if not mine:
@@ -209,7 +203,7 @@ async def cmd_store_fish(ctx):
         aqua.setdefault(fid, []).extend(weights)
         core._save(data)
     name = game.FISH[fid][0]
-    return await ctx.reply_text(f"🐠 已把 {name} ×{qty} 存进水族箱，偷鱼贼偷不到啦喵！")
+    return await ctx.reply_text(f"🐠 已把 {name} ×{qty} 存进鱼缸，偷鱼贼偷不到啦喵！")
 
 
 @register(keywords=["取鱼"], help="", role=ROLE_ALL, matcher=core._starts_with("取鱼"))
@@ -233,7 +227,7 @@ async def cmd_take_fish(ctx):
         aqua = u.setdefault("aquarium", {})
         mine = aqua.get(fid, [])
         if not mine:
-            return await ctx.reply_text(f"水族箱里没有「{game.FISH[fid][0]}」喵")
+            return await ctx.reply_text(f"鱼缸里没有「{game.FISH[fid][0]}」喵")
         if qty > len(mine):
             qty = len(mine)
         weights = mine[:qty]
@@ -243,4 +237,57 @@ async def cmd_take_fish(ctx):
         u.setdefault("inventory", {}).setdefault(fid, []).extend(weights)
         core._save(data)
     name = game.FISH[fid][0]
-    return await ctx.reply_text(f"🐠 已从水族箱取出 {name} ×{qty} 喵")
+    return await ctx.reply_text(f"🐠 已从鱼缸取出 {name} ×{qty} 喵")
+
+
+@register(keywords=["买鱼缸"], help="🐠 购买鱼缸（观赏防偷）", role=ROLE_ALL, exact=True)
+async def cmd_buy_aquarium(ctx):
+    with core._lock:
+        data = core._load()
+        u = core._user(data, ctx.openid)
+        if int(u.get("aquarium_limit", 0)) > 0:
+            return await ctx.reply_text("你已经拥有鱼缸啦，发「升级鱼缸」扩大容量喵")
+    name, price, cap = game.AQUARIUM_TANKS[1]
+    if not wallet.spend(ctx.openid, price):
+        return await ctx.reply_text(f"💸 余额不足，买「{name}」需 {price} 喵喵币喵")
+    with core._lock:
+        data = core._load()
+        u = core._user(data, ctx.openid)
+        if int(u.get("aquarium_limit", 0)) > 0:
+            wallet.add(ctx.openid, price)
+            return await ctx.reply_text("你已经拥有鱼缸啦，发「升级鱼缸」扩大容量喵")
+        u["aquarium_limit"] = AQUARIUM_LIMIT
+        core._save(data)
+    return await ctx.reply_text(
+        f"✅ 购入「{name}」！容量 {AQUARIUM_LIMIT} 条，发「鱼缸」欣赏，"
+        f"发「升级鱼缸」扩容（最高 200 条）喵")
+
+
+@register(keywords=["升级鱼缸"], help="🐠 升级鱼缸扩大容量", role=ROLE_ALL, exact=True)
+async def cmd_upgrade_aquarium(ctx):
+    with core._lock:
+        data = core._load()
+        u = core._user(data, ctx.openid)
+        cur = int(u.get("aquarium_limit", 0))
+    if cur <= 0:
+        return await ctx.reply_text("你还没有鱼缸喵，发「买鱼缸」买一个")
+    max_cap = game.AQUARIUM_TANKS[max(game.AQUARIUM_TANKS)][2]
+    if cur >= max_cap:
+        return await ctx.reply_text("🔝 已经是最大容量「豪华鱼缸」啦喵 ✨")
+    nxt = None
+    for lv in sorted(game.AQUARIUM_TANKS):
+        if game.AQUARIUM_TANKS[lv][2] > cur:
+            nxt = lv
+            break
+    name, price, cap = game.AQUARIUM_TANKS[nxt]
+    if not wallet.spend(ctx.openid, price):
+        return await ctx.reply_text(f"💸 余额不足，升级到「{name}」需 {price} 喵喵币喵")
+    with core._lock:
+        data = core._load()
+        u = core._user(data, ctx.openid)
+        if int(u.get("aquarium_limit", 0)) != cur:
+            wallet.add(ctx.openid, price)
+            return await ctx.reply_text("状态有变化，请重发「升级鱼缸」喵")
+        u["aquarium_limit"] = cap
+        core._save(data)
+    return await ctx.reply_text(f"✅ 升级到「{name}」！容量 {cap} 条喵")

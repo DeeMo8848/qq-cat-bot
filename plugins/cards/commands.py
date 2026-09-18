@@ -371,6 +371,7 @@ async def cmd_card_help(ctx):
         "（组合规则：带「整幅」忽略「主体悬浮」「描边」；「整幅+抠图」忽略「背景」，悬浮/描边保留）\n"
         "「销毁卡牌 卡名」销毁（无补偿）· 「上架卡牌 卡名 价格」出售\n"
         "「购买卡牌 卡名」买别人的卡 · 「卡牌市场」商店网页（含素材分页预览）\n"
+        "「导出卡牌 卡名 为图片 / 为网页」导出卡牌文件（2D 图 / 3D 单文件网页）\n"
         "「素材包」查看素材 · 「购买背景 名称」「购买辉光 名称」等解锁素材（永久使用）\n"
         "同一用户不能做两张同名卡（会拦截，先销毁旧的或换名）；操作重名卡时用消息里给的卡牌 ID 指定")
 
@@ -661,9 +662,63 @@ async def cmd_buy_material(ctx):
     await ctx.reply(f"🎨 解锁成功！{_CAT_CN.get(cat_key)}「{canon}」（花费 {price} 喵币），永久使用喵")
 
 
+# ---------- 导出卡牌（命令行调用 cardforge --export，发回文件） ----------
+
+_EXPORT_KW = (("为网页", "html"), ("为图片", "image"))
+
+
+@register(keywords=["导出卡牌"], help="🃏 导出卡牌为图片 / 网页单文件", role=ROLE_ALL)
+async def cmd_export_card(ctx):
+    text = (ctx.args or "").strip()
+    etype = None
+    name = text
+    for marker, et in _EXPORT_KW:
+        i = text.rfind(marker)
+        if i >= 0:
+            etype, name = et, text[:i].strip()
+            break
+    if not name:
+        return await ctx.reply(
+            "格式：导出卡牌 <卡名> 为图片 或 为网页，如「导出卡牌 莲之空 为图片」喵")
+    c, hint = _resolve_own_card(ctx.openid, name)
+    if not c:
+        return await ctx.reply(hint)
+    if etype is None:
+        return await ctx.reply(
+            f"卡牌「{c['name']}」要导出成什么喵？\n"
+            f"· 导出卡牌 {c['name']} 为图片（2D 合成图）\n"
+            f"· 导出卡牌 {c['name']} 为网页（3D 交互单文件，图片已内嵌，可离线打开）")
+
+    card_key = c["cardKey"]
+    ext = "png" if etype == "image" else "html"
+    out = os.path.join(_TMP_DIR, f"{card_key}.{ext}")
+    try:
+        rc, out_text = await forge._run_forge(
+            ["--export", card_key, "--export-type", etype, "--out", out])
+    except Exception as e:
+        return await ctx.reply("导出失败：%s" % e)
+    if rc != 0 or not os.path.isfile(out):
+        tail = (out_text or "").strip().splitlines()
+        return await ctx.reply("导出失败：" + ((tail[-1] if tail else "cardforge 返回异常")[:120]))
+
+    if etype == "image":
+        try:
+            return await ctx.sender.send_image_with_text(
+                ctx.message,
+                f"🎴 卡牌「{c['name']}」（{cd.RARITY_EMOJI.get(c['rarity'], '')}{c['rarity']}）2D 图",
+                out, reply=True)
+        except Exception as e:
+            return await ctx.reply("图片发送失败：%s" % e)
+
+    try:
+        return await ctx.sender.send_local_file(ctx.message, 4, out, reply=True)
+    except Exception as e:
+        return await ctx.reply("文件发送失败：%s" % e)
+
+
 # web 后台命令列表（卡牌模块整体开关）
 CARD_CMD_NAMES = {
     "cmd_card_help", "cmd_card_make", "cmd_album", "cmd_my_cards",
     "cmd_destroy_card", "cmd_card_market", "cmd_list_card", "cmd_unlist_card",
-    "cmd_buy_card", "cmd_materials", "cmd_buy_material",
+    "cmd_buy_card", "cmd_materials", "cmd_buy_material", "cmd_export_card",
 }

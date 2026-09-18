@@ -82,6 +82,16 @@ STATIC_PUBLIC_URL = _cfg("STATIC_PUBLIC_URL", "https://page.deemo8848.dpdns.org"
 PYTHON = _cfg("PYTHON", "python")
 
 
+# ---- 与 VPN / 代理客户端共存（实现见 bot/core/vpn_bypass.py）----
+# 本机开 Clash 系客户端(猫猫云等)的 TUN 模式翻墙时，cloudflared 隧道出站流量
+# 会被代理内核接管并可能被丢给代理节点，导致「bot 在线却收不到消息」。
+# 开启后 bot 会自动往内核里补一组「cloudflared 直连」规则并定时巡检。
+VPN_BYPASS_ENABLED = bool(_cfg("VPN_BYPASS_ENABLED", True))
+MIHOMO_API = _cfg("MIHOMO_API", "http://127.0.0.1:9790")          # 代理内核控制接口
+MIHOMO_CONFIG = _cfg("MIHOMO_CONFIG", "")                          # 留空则自动定位配置文件
+VPN_BYPASS_INTERVAL = int(_cfg("VPN_BYPASS_INTERVAL", 600))        # 巡检间隔（秒）
+
+
 # ---- 「吃什么」插件功能（均可覆盖至 settings.json）----
 EAT_DEFAULT_FOODS = [
     "黄焖鸡米饭", "麻辣烫", "兰州拉面", "沙县小吃", "重庆小面", "螺蛳粉",
@@ -130,4 +140,7 @@ def _resolve_exe(override: str | None, name: str, legacy: str, fallback_cmd: str
 
 BBDOWN_EXE = _resolve_exe(_cfg("BBDOWN_EXE", ""), "BBDown", _BBDOWN_LEGACY, "BBDown")
 BBDOWN_DIR = os.path.dirname(BBDOWN_EXE) if os.path.sep in BBDOWN_EXE else ""
+# BBDown 登录态（BBDown.data）的来源：用户手动登录用的 BBDown 所在目录。
+# bot 运行时会把它同步到 BBDOWN_DIR，避免未登录导致解析受限；cookie 过期后重新登录即自动续期。
+BBDOWN_COOKIE_SRC = _cfg("BBDOWN_COOKIE_SRC", os.path.dirname(_BBDOWN_LEGACY) if _BBDOWN_LEGACY else "")
 FFMPEG_EXE = _resolve_exe(_cfg("FFMPEG_EXE", ""), "ffmpeg", _FFMPEG_LEGACY, "ffmpeg")

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🐟 我的鱼缸</title>
+<link rel="stylesheet" href="style.css?v=14">
+</head>
+<body>
+<div id="tank">
+  <img id="bg" src="images/Ocean_Floor.png" alt="" draggable="false">
+  <div id="water3" class="water ripple slow-hi"></div>
+  <div id="water2" class="water ripple slow-lo"></div>
+  <div id="decor"></div>
+  <div id="food"></div>
+  <div id="fish"></div>
+  <div id="depth"></div>
+  <div id="sand"></div>
+  <div id="hud">
+    <span id="cap">🐟 0 / 60</span>
+    <span id="hint">点鱼看信息 · 右键 / 长按 / 双击喂食</span>
+    <button id="snd" type="button" title="声音开关" aria-label="声音开关">🔊</button>
+  </div>
+  <div id="panel" class="hidden"></div>
+</div>
+<script src="fish_data.js?v=14"></script>
+<script src="fish_bodies.js?v=14"></script>
+<script src="app.js?v=14"></script>
+</body>
+</html>
