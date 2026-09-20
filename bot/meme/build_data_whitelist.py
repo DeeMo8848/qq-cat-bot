@@ -6,15 +6,35 @@
 """
 
 import json
+import os
 import re
+from pathlib import Path
 
 from meme_generator.config import meme_config
 from meme_generator import manager
+import meme_generator
 
-BUILTIN = r"D:\java\Python\Lib\site-packages\meme_generator\memes"
-DEMO = r"C:\Users\DeeMo\meme-demo\memes"
-OLD_WHITELIST = r"D:\jsq\qqbot\cache\meme_list_kw.txt"
-OUT = r"D:\jsq\qqbot\bot\meme\meme_data.py"
+# 项目根：bot/meme/ -> bot/ -> 项目根（跨平台，无硬编码盘符）
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+# meme_generator 自带的 memes 目录（pip 安装位置因平台而异，自动定位）
+BUILTIN = str(Path(meme_generator.__file__).resolve().parent / "memes")
+
+# 可选：额外的 meme 源目录，通过环境变量 MEME_DEMO_DIR 指定；
+# 未设置或不存在时自动跳过（Windows 本机开发环境用它挂 meme-demo）
+DEMO = os.environ.get("MEME_DEMO_DIR", "")
+
+# 旧白名单：优先项目内 cache/，其次 MEME_WHITELIST 环境变量指定
+_whitelist_candidates = [
+    ROOT / "cache" / "meme_list_kw.txt",
+    ROOT / "bot" / "meme" / "meme_list_kw.txt",
+]
+_env_wl = os.environ.get("MEME_WHITELIST", "")
+if _env_wl:
+    _whitelist_candidates.insert(0, Path(_env_wl))
+OLD_WHITELIST = next((str(p) for p in _whitelist_candidates if p.is_file()), str(_whitelist_candidates[0]))
+
+OUT = str(ROOT / "bot" / "meme" / "meme_data.py")
 
 # 旧白名单中的歧义词：在新枚举下无法唯一映射，按旧逻辑一并剔除
 DROPPED = {"anan_hs", "acacia_anan_holdsign"}
@@ -24,7 +44,8 @@ FEIYU_EXTRA = {"肥鱼说", "肥鱼举牌"}
 
 meme_config.meme.load_builtin_memes = True
 d = list(meme_config.meme.meme_dirs or [])
-if DEMO not in d:
+# DEMO 仅在确实存在时加载（Linux 部署环境通常没有）
+if DEMO and os.path.isdir(DEMO) and DEMO not in d:
     d.append(DEMO)
 manager._memes.clear()
 manager.load_memes(BUILTIN)
@@ -47,7 +68,13 @@ for m in manager.get_memes():
 all_kw2key = {kw: next(iter(s)) for kw, s in mapping.items() if len(s) == 1}
 
 # 目标关键词集：旧白名单(去掉歧义) + feiyu 两个词，只保留能唯一映射的
-old_lines = [l.strip() for l in open(OLD_WHITELIST, encoding="utf-8") if l.strip()]
+if os.path.isfile(OLD_WHITELIST):
+    old_lines = [l.strip() for l in open(OLD_WHITELIST, encoding="utf-8") if l.strip()]
+else:
+    # 白名单缺失（如 Linux 部署时未随仓库分发）时的兜底：
+    # 直接用内置全量关键词，仍保证「唯一映射」这一约束
+    old_lines = sorted(all_kw2key.keys())
+    print("提示：未找到白名单 %s，改用内置全量关键词 %d 个" % (OLD_WHITELIST, len(old_lines)))
 target = set(f for f in old_lines if f not in DROPPED) | FEIYU_EXTRA
 target = {w for w in target if w in all_kw2key}
 

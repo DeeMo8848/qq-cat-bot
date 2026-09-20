@@ -70,3 +70,8 @@ DIY卡牌计划.md
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Linux 部署：venv 与根目录运行时二进制（不入库）
+.venv/
+venv/
+/cloudflared
