@@ -312,19 +312,13 @@ async def fetch_quote() -> str:
 
 # ---------- PIL 绘图 ----------
 def _load_font(size: int, bold: bool = False):
-    from PIL import ImageFont
-    candidates = []
-    if bold:
-        candidates += [r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\simhei.ttf"]
-    candidates += [r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf",
-                   r"C:\Windows\Fonts\simhei.ttc", r"C:\Windows\Fonts\Deng.ttf"]
-    for c in candidates:
-        if os.path.exists(c):
-            try:
-                return ImageFont.truetype(c, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
+    """加载中文字体。
+
+    优先用项目自带字体（bot/parse/resources/ 下），其次系统字体；
+    跨平台可用，避免硬编码 Windows 字体路径导致 Linux 上中文变方块。
+    """
+    from bot.core.platform import load_cjk_font
+    return load_cjk_font(size, bold=bold, project_root=ROOT)
 
 
 def _shorten(s: str, limit: int) -> str:

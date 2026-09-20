@@ -106,6 +106,72 @@ def find_font(*names: str) -> str | None:
     return None
 
 
+# 项目自带的中文字体（随仓库分发，跨平台最可靠）。按优先级排列。
+# 放在 bot/parse/resources/ 与 bot/meme/custom_memes/feiyu/fonts/ 下。
+_BUNDLED_CJK_FONTS = (
+    ("bot", "parse", "resources", "HYSongYunLangHeiW-1.ttf"),
+    ("bot", "meme", "custom_memes", "feiyu", "fonts", "wqy-microhei.ttc"),
+)
+
+# 系统中文字体候选名（Linux 常见 noto/wqy，Windows 常见 msyh/simhei）
+_SYSTEM_CJK_NAMES = (
+    "msyh.ttc", "msyhbd.ttc", "simhei.ttf", "simsun.ttc", "Deng.ttf",
+    "NotoSansCJK-Regular.ttc", "NotoSansCJKsc-Regular.otf",
+    "NotoSansSC-Regular.otf", "SourceHanSansSC-Regular.otf",
+    "wqy-microhei.ttc", "wqy-zenhei.ttc", "DroidSansFallbackFull.ttf",
+)
+
+_cjk_font_cache: dict[str, str | None] = {}
+
+
+def find_cjk_font(project_root: str | None = None) -> str | None:
+    """找一个可用的中文字体，返回绝对路径；找不到返回 None。
+
+    查找顺序（越靠前越优先）：
+      1. 项目自带字体（随仓库分发，Linux 上最可靠）
+      2. 系统字体目录里的常见中文字体
+
+    结果按 project_root 缓存，避免每次出图都扫目录。
+    """
+    root = project_root or os.environ.get("QQBOT_ROOT") or os.getcwd()
+    key = os.path.abspath(root)
+    if key in _cjk_font_cache:
+        return _cjk_font_cache[key]
+
+    # 1) 项目自带
+    for parts in _BUNDLED_CJK_FONTS:
+        p = os.path.join(key, *parts)
+        if os.path.isfile(p):
+            _cjk_font_cache[key] = p
+            return p
+
+    # 2) 系统字体
+    p = find_font(*_SYSTEM_CJK_NAMES)
+    _cjk_font_cache[key] = p
+    return p
+
+
+def load_cjk_font(size: int, bold: bool = False, project_root: str | None = None):
+    """加载一个中文字体，返回 PIL ImageFont。找不到时回退 PIL 默认字体。
+
+    解决「Linux 上没有 Windows 字体路径 → 回退 load_default() → 中文变方块」的问题。
+    """
+    from PIL import ImageFont
+
+    path = find_cjk_font(project_root)
+    if path:
+        try:
+            # .ttc 字体集合：bold 时尝试取第 1 个 face（若有黑体等粗体 face）
+            index = 1 if bold and path.lower().endswith(".ttc") else 0
+            try:
+                return ImageFont.truetype(path, size, index=index)
+            except Exception:
+                return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
 # ---------------------------------------------------------------- 进程
 
 def popen_kwargs_detached() -> dict:
