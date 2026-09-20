@@ -130,7 +130,9 @@ def main():
         "仅收录能唯一映射到单个 key 的关键词，且保证每个 key 都真实存在于已加载模板中。\n"
         '"""\n'
     )
-    with open(out_path, "w", encoding="utf-8") as f:
+    # newline="" 关掉 Python 的换行转换，保证任何平台都写 LF。
+    # 否则 Windows 上会写成 CRLF，同一份文件在 Linux/macOS 上 md5 不一致。
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(head)
         f.write("KW = %s\n" % json.dumps(uniq, ensure_ascii=False))
         f.write("META = %s\n" % json.dumps(out_meta, ensure_ascii=False))
