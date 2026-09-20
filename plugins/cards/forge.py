@@ -100,13 +100,43 @@ def list_materials(cat: str) -> list:
 
 
 async def _run_forge(args: list, timeout: int = 1800):
-    """执行 cardforge（JSON 输出），返回 (退出码, 输出文本)。"""
-    py = os.path.join(CARDFORGE_DIR, ".venv", "Scripts", "python.exe")
-    if os.path.isfile(py):
-        cmd = [py, os.path.join(CARDFORGE_DIR, "cardforge.py"), *args]
-    else:
-        # 环境未初始化：走 cardforge.cmd（首次会自动执行 setup.cmd）
+    """执行 cardforge（JSON 输出），返回 (退出码, 输出文本)。
+
+    跨平台解析解释器：
+      1. cardforge 自带的 venv（Windows 在 .venv/Scripts/，POSIX 在 .venv/bin/）
+      2. 项目配置的 PYTHON（settings.json 的 PYTHON 字段）
+      3. 当前解释器 sys.executable
+    这样 Linux 上不会再退化成必须靠 cmd / cardforge.cmd 才能跑。
+    """
+    import sys
+
+    py = ""
+    for rel in (os.path.join(".venv", "Scripts", "python.exe"),
+                os.path.join(".venv", "bin", "python"),
+                os.path.join(".venv", "bin", "python3")):
+        cand = os.path.join(CARDFORGE_DIR, rel)
+        if os.path.isfile(cand):
+            py = cand
+            break
+    if not py:
+        try:
+            from config import PYTHON as _CFG_PYTHON
+            if _CFG_PYTHON and os.path.isfile(_CFG_PYTHON):
+                py = _CFG_PYTHON
+        except Exception:
+            pass
+    if not py:
+        py = sys.executable or "python"
+
+    script = os.path.join(CARDFORGE_DIR, "cardforge.py")
+    if os.path.isfile(script):
+        cmd = [py, script, *args]
+    elif os.name == "nt":
+        # Windows 且脚本缺失：回退 cardforge.cmd（首次会自动执行 setup.cmd）
         cmd = ["cmd", "/c", os.path.join(CARDFORGE_DIR, "cardforge.cmd"), *args]
+    else:
+        cmd = ["bash", os.path.join(CARDFORGE_DIR, "cardforge.sh"), *args]
+
     _log.info("执行 cardforge: %s", " ".join(cmd))
     # cardforge.py 输出中文 JSON 时 Windows 管道默认按 GBK 编码，
     # 强制子进程用 UTF-8 输出，否则 bot 端按 utf-8 解码会得到乱码路径
