@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-"""重建 meme 关键词静态数据 bot/meme_data.py（由 D:\\java\\Python 运行）。
+"""[已弃用，保留作回退] 重建 meme 关键词静态数据 bot/meme/meme_data.py。
 
-在「meme更新」时调用：重新枚举当前所有 meme（内置 + meme-demo 扩展），
-把唯一映射的关键词与模板元数据写回 meme_data.py。
+⚠️ 请优先使用 `rebuild_meme_data.py`：
+    · 它带**白名单过滤**与**死映射自检**，能保证 KW 里的每个 key 都真实可加载，
+      避免出现「表情 xxx 不存在」。
+    · 本脚本只做朴素枚举，且会因歧义关键词被合并而丢词，没有自检。
+
+「meme更新」命令现在优先调用 rebuild_meme_data.py，本脚本仅在新脚本失败时回退。
 """
 
 import json

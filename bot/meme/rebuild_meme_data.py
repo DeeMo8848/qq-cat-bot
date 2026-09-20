@@ -26,7 +26,13 @@ sys.path.insert(0, str(_PROJ_ROOT))
 
 
 def load_all_memes():
-    """加载内置模板 + 项目自定义模板，返回 manager（已注册的模板）。"""
+    """加载内置模板 + 项目自定义模板，返回 manager（已注册的模板）。
+
+    自定义模板来源有三处，全部纳入：
+      1. `custom_memes/` 下的模板（含 `_sources` 装载进来的，以及自带的 feiyu）
+      2. `custom_memes/_sources/` 里尚未装载的源仓库模板（直接就地加载，避免必须先复制）
+      3. `meme_config.meme.meme_dirs` 里额外配置的目录
+    """
     import meme_generator
     from meme_generator.config import meme_config
     from meme_generator import manager
@@ -37,24 +43,43 @@ def load_all_memes():
     manager._memes.clear()
     manager.load_memes(str(builtin))
 
-    # 项目自带自定义模板：逐个子目录加载（比整目录加载更可靠）
+    def _try_load(path):
+        try:
+            manager.load_memes(str(path))
+            return True
+        except Exception as e:
+            print("  [warn] 加载失败 %s: %s" % (path, e), file=sys.stderr)
+            return False
+
+    # 1) custom_memes 下逐个模板目录加载（比整目录加载更可靠）
     custom_root = _PROJ_ROOT / "bot" / "meme" / "custom_memes"
     if custom_root.is_dir():
         for sub in sorted(custom_root.iterdir()):
+            if sub.name == "_sources" or sub.name.startswith("."):
+                continue
             if sub.is_dir() and (sub / "__init__.py").is_file():
-                try:
-                    manager.load_memes(str(sub))
-                except Exception as e:
-                    print("  [warn] 加载失败 %s: %s" % (sub.name, e), file=sys.stderr)
+                _try_load(sub)
 
-    # meme_config 里额外配置的目录（例如本机开发时的 meme-demo）
+        # 2) _sources 下的源仓库模板：按内容自适应扫描后逐个加载。
+        #    这样即使还没执行「装载进 custom_memes」，重建也能覆盖到全部模板。
+        try:
+            from bot.meme.meme_sources import iter_template_dirs, default_source_roots
+            roots = default_source_roots(custom_root)
+            if roots:
+                extra = 0
+                for root in roots:
+                    for tpl in iter_template_dirs(root):
+                        if _try_load(tpl):
+                            extra += 1
+                print("  _sources 额外加载 %d 个模板（来自 %d 个源仓库）" % (extra, len(roots)))
+        except Exception as e:
+            print("  [warn] _sources 扫描失败: %s" % e, file=sys.stderr)
+
+    # 3) meme_config 里额外配置的目录（例如本机开发时的 meme-demo）
     for d in (meme_config.meme.meme_dirs or []):
         d = str(d)
         if os.path.isdir(d):
-            try:
-                manager.load_memes(d)
-            except Exception:
-                pass
+            _try_load(d)
 
     return manager
 

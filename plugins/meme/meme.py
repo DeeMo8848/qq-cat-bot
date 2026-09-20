@@ -24,7 +24,13 @@ PY_EXE = PYTHON
 _PROJ_ROOT = ROOT
 WORKER = os.path.join(_PROJ_ROOT, "bot", "meme", "meme_worker.py")
 RENDER = os.path.join(_PROJ_ROOT, "bot", "meme", "render.py")
-REBUILD = os.path.join(_PROJ_ROOT, "bot", "meme", "rebuild_data.py")
+# 「meme更新」用的重建脚本。
+# 优先用 rebuild_meme_data.py：以「实际加载的模板」为准 + 白名单过滤 + 死映射自检，
+# 能避免模板声明与磁盘不一致导致的「表情 xxx 不存在」。
+# rebuild_data.py 作为回退保留（老逻辑，无自检）。
+REBUILD = os.path.join(_PROJ_ROOT, "bot", "meme", "rebuild_meme_data.py")
+REBUILD_LEGACY = os.path.join(_PROJ_ROOT, "bot", "meme", "rebuild_data.py")
+_WHITELIST = os.path.join(_PROJ_ROOT, "cache", "meme_list_kw.txt")
 _TMP_ROOT = os.path.join(_PROJ_ROOT, "tmp", "meme")
 # meme列表缓存：模板没变化时复用已生成的图片，避免每次重新渲染
 _CACHE_DIR = os.path.join(_PROJ_ROOT, "cache")
@@ -509,10 +515,19 @@ async def _update(ctx):
         f'"{PY_EXE}" -m pip install "meme-generator==0.1.14"', timeout=240
     ))[2] == 0
     # 步骤B：整理本地数据（列表/字典/清单）。
-    rebuild = await tools.run_script(f'"{PY_EXE}" "{REBUILD}"', timeout=120)
+    # 先用带自检的新脚本（白名单过滤 + 死映射清零），失败再回退旧脚本。
+    cmd_new = f'"{PY_EXE}" "{REBUILD}"'
+    if os.path.isfile(_WHITELIST):
+        cmd_new += f' --whitelist "{_WHITELIST}"'
+    rebuild = await tools.run_script(cmd_new, timeout=180)
     b_ok = rebuild[2] == 0 and os.path.exists(
         os.path.join(_PROJ_ROOT, "bot", "meme", "meme_data.py")
     )
+    if not b_ok:
+        rebuild = await tools.run_script(f'"{PY_EXE}" "{REBUILD_LEGACY}"', timeout=180)
+        b_ok = rebuild[2] == 0 and os.path.exists(
+            os.path.join(_PROJ_ROOT, "bot", "meme", "meme_data.py")
+        )
     if b_ok:
         _reload_data()  # 整理成功后热重载，模板增删时会自动重绘列表图
     if a_ok and b_ok:

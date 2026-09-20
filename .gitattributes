@@ -1,0 +1,50 @@
+# 统一换行符策略，避免 Windows / Linux 之间来回转换导致
+# 「本地能跑、拉下来就坏」以及 md5 对不上。
+# 参见：本仓库曾因 install.ps1 只有 LF 结尾，
+#       在 Windows PowerShell 5.1 上被解析出错（多行 if/elseif 语句块报"意外的标记"）。
+
+# 默认：仓库内统一存 LF，检出时按平台转换
+* text=auto
+
+# ---- Windows 专用脚本：必须保持 CRLF ----
+# Windows PowerShell 5.1 解析「仅 LF 结尾」的 .ps1 时会出错，
+# 因此这些文件在仓库里也存 CRLF，检出后依然是 CRLF。
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# ---- Shell / Python / 文本：统一 LF ----
+# 这些文件在 Linux 上运行，CRLF 会导致解释器报错（如 \r 出现在 shebang 里）。
+*.sh    text eol=lf
+*.py    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+
+# ---- 二进制：不要碰 ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.ttf   binary
+*.ttc   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.7z    binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.mp3   binary
+*.mp4   binary
+*.wav   binary

@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 #  install.ps1  —  QQ 机器人首次安装 / 备份恢复环境准备脚本
 # ---------------------------------------------------------------------
 #  用途：检测本机是否具备运行环境，缺失的依赖自动下载到项目内并安装。
@@ -14,7 +14,7 @@
 #  用法（在本目录执行）：
 #     powershell -ExecutionPolicy Bypass -File .\install.ps1
 #     powershell -ExecutionPolicy Bypass -File .\install.ps1 -PythonPath "C:\Python310\python.exe"
-#     powershell -ExecutionPolicy Bypass -File .\install.ps1 -GitToken "ghp_xxx"   # 拉取私有资源仓库需令牌
+#     powershell -ExecutionPolicy Bypass -File .\install.ps1 -GitToken "ghp_xxx"   # 仅当资源仓库改为私有时才需要
 # =====================================================================
 param(
     [string]$PythonPath = "python",
@@ -137,7 +137,7 @@ if (Test-Path (Join-Path $cfDir "cardforge.py")) {
     if (Test-Path (Join-Path $cfDir "cardforge.py")) {
         Write-Host "cardforge 就绪: $cfDir（首次制作卡牌时自动安装依赖与抠图模型）"
     } else {
-        Write-Host "cardforge 克隆失败（私有仓库需 -GitToken 或已 git 登录）。可在 settings.json 的 CARD_DIR 指定已有目录。" -ForegroundColor Yellow
+        Write-Host "cardforge 克隆失败。可在 settings.json 的 CARD_DIR 指定已有目录。" -ForegroundColor Yellow
     }
 }
 
@@ -167,7 +167,7 @@ if (Test-Path (Join-Path $imgLib "dragon")) {
     if (Test-Path (Join-Path $imgLib "dragon")) {
         Write-Host "图库就绪，龙图目录: $(Join-Path $imgLib 'dragon')"
     } else {
-        Write-Host "图库克隆失败（私有仓库需 -GitToken 或已 git 登录）。可在 settings.json 的 DRAGON_DIR 手动指定。" -ForegroundColor Yellow
+        Write-Host "图库克隆失败，可在 settings.json 的 DRAGON_DIR 手动指定。" -ForegroundColor Yellow
     }
 }
 
@@ -179,19 +179,21 @@ if (-not (Test-Cmd git)) {
     Write-Host "未安装 git，跳过扩展 meme 拉取（内置 meme 来自 meme-generator 包，已经可正常使用）。" -ForegroundColor Yellow
 } else {
     $src = Join-Path $custom "_sources"
-    $aggOk = $false
-    if ($GitToken) {
-        # 优先：克隆聚合仓库（私有，子模块指向公开源仓库）
-        if (-not (Test-Path (Join-Path $src "meme_emoji"))) {
-            Write-Host "拉取聚合仓库 qq-cat-memes（含子模块）..."
-            git clone --recursive --depth 1 "https://x-access-token:$GitToken@github.com/DeeMo8848/qq-cat-memes.git" $src 2>&1 | Out-Null
-            $aggOk = Test-Path (Join-Path $src "meme_emoji")
-            if ($aggOk) { Remove-Item (Join-Path $src ".git") -Recurse -Force -ErrorAction SilentlyContinue }
+    # 三个资源仓库（qq-cat-memes / qq-cat-image-lib / cardforge）实测均为【公开仓库】，
+    # 无需令牌即可克隆。$GitToken 只在被改成私有仓库时才需要。
+    if (-not (Test-Path (Join-Path $src "meme_emoji"))) {
+        Write-Host "拉取聚合仓库 qq-cat-memes（含子模块）..."
+        $aggUrl = "https://github.com/DeeMo8848/qq-cat-memes.git"
+        if ($GitToken) { $aggUrl = "https://x-access-token:$GitToken@github.com/DeeMo8848/qq-cat-memes.git" }
+        git clone --recursive --depth 1 $aggUrl $src 2>&1 | Out-Null
+        if (Test-Path (Join-Path $src "meme_emoji")) {
+            Get-ChildItem $src -Recurse -Force -Directory -Filter ".git" -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         } else {
-            $aggOk = $true
+            Write-Host "聚合仓库克隆失败，回退为直接克隆 4 个公开源仓库" -ForegroundColor Yellow
         }
     }
-    if (-not $aggOk) {
+    if (-not (Test-Path (Join-Path $src "meme_emoji"))) {
         # 回退：直接克隆 4 个公开源仓库（无需令牌）
         $repos = @(
             "https://github.com/anyliew/meme_emoji",
@@ -205,34 +207,49 @@ if (-not (Test-Cmd git)) {
             if (-not (Test-Path $dst)) {
                 Write-Host "拉取扩展仓库: $url"
                 git clone --depth 1 $url $dst 2>&1 | Out-Null
+                Remove-Item (Join-Path $dst ".git") -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
-    # 把每个源的 memes/* 模板装载进 custom_memes
+    # 把各源的模板装载进 custom_memes。
+    # ★ 统一走 meme_sources.py：按内容自适应识别模板容器，
+    #   兼容 meme_emoji/crazy_emoji 的 emoji/ 布局与其余仓库的 memes/ 布局。
+    #   （早先的 PowerShell 版只找 memes/，会把 emoji/ 布局的两个仓库静默漏掉 445 个模板。）
     if (Test-Path $src) {
-        Get-ChildItem $src -Directory | ForEach-Object {
-            $memeDir = Join-Path $_.FullName "memes"
-            if (-not (Test-Path $memeDir)) { $memeDir = $_.FullName }
-            if (Test-Path $memeDir) {
-                Get-ChildItem $memeDir -Directory | ForEach-Object {
-                    if (Test-Path (Join-Path $_.FullName "__init__.py")) {
-                        $target = Join-Path $custom $_.Name
-                        if (-not (Test-Path $target)) {
-                            Copy-Item $_.FullName $target -Recurse -Force
-                        }
-                    }
-                }
+        # 用真实字符写一个临时 py 脚本再执行 —— 比 here-string 稳妥，
+        # 也不受 PowerShell 对 @" / 引号转义的挑剔影响。
+        $loaderPath = Join-Path $env:TEMP "qqbot_load_sources.py"
+        $lines = @(
+            "import sys",
+            "sys.path.insert(0, sys.argv[1])",
+            "from bot.meme.meme_sources import sync_sources",
+            "c, s, k, t = sync_sources(custom_dir=sys.argv[2], sources_dir=sys.argv[3], verbose=False)",
+            "print('%d %d %d %d' % (c, s, k, t))"
+        )
+        Set-Content -Path $loaderPath -Value $lines -Encoding UTF8
+        $res = & $Py $loaderPath $Root $custom $src 2>$null | Select-Object -Last 1
+        if ($res) {
+            $parts = $res -split '\s+'
+            if ($parts.Count -ge 4 -and [int]$parts[3] -gt 0) {
+                Write-Host "meme 素材装载完成：源仓库 $($parts[3]) 个模板（新复制/覆盖 $($parts[0])，已最新 $($parts[1])，本地独有保留 $($parts[2])）"
+            } else {
+                Write-Host "meme 素材装载数量为 0 —— 请检查 $src 是否为空" -ForegroundColor Yellow
             }
+        } else {
+            Write-Host "meme 素材装载脚本执行失败，可手动运行：python bot\meme\meme_sources.py" -ForegroundColor Yellow
         }
     }
-    Write-Host "meme 素材拉取/装载完成（与内置重复的关键词会被自动忽略）。"
 }
 
 # ---------- 8. 重建 meme 关键词 ----------
 Write-Step "第 8 步 / 共 8 步：重建 meme 关键词数据"
-& $Py bot\meme\rebuild_data.py
+& $Py bot\meme\rebuild_meme_data.py --whitelist cache\meme_list_kw.txt
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "meme 关键词重建失败（仓库已带一份 meme_data.py，可正常使用；稍后用「meme更新」重试）。" -ForegroundColor Yellow
+    Write-Host "新脚本重建失败，回退旧脚本..." -ForegroundColor Yellow
+    & $Py bot\meme\rebuild_data.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "meme 关键词重建失败（仓库已带一份 meme_data.py，可正常使用；稍后用「meme更新」重试）。" -ForegroundColor Yellow
+    }
 } else {
     Write-Host "meme 关键词已重建。"
 }

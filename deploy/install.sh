@@ -258,21 +258,29 @@ if command -v git >/dev/null 2>&1; then
     if git clone --depth 1 "$IMG_URL" "$IMG_LIB" >/dev/null 2>&1; then
       ok "图库就绪"
     else
-      warn "图库克隆失败（私有仓库需 --token），可在 settings.json 指定 DRAGON_DIR"
+      warn "图库克隆失败，可在 settings.json 指定 DRAGON_DIR"
     fi
   fi
 
   CUSTOM="$ROOT/bot/meme/custom_memes"
   mkdir -p "$CUSTOM"
   SRC="$CUSTOM/_sources"
-  AGG_OK=0
-  if [[ -n "$GIT_TOKEN" && ! -d "$SRC/meme_emoji" ]]; then
-    if git clone --recursive --depth 1 \
-        "https://x-access-token:${GIT_TOKEN}@github.com/DeeMo8848/qq-cat-memes.git" "$SRC" >/dev/null 2>&1; then
-      AGG_OK=1; rm -rf "$SRC/.git"
+  # 三个资源仓库（qq-cat-memes / qq-cat-image-lib / cardforge）实测均为【公开仓库】，
+  # 无需令牌即可克隆。GIT_TOKEN 只在被改成私有仓库时才需要。
+  if [[ ! -d "$SRC/meme_emoji" ]]; then
+    AGG_URL="https://github.com/DeeMo8848/qq-cat-memes.git"
+    [[ -n "$GIT_TOKEN" ]] && AGG_URL="https://x-access-token:${GIT_TOKEN}@github.com/DeeMo8848/qq-cat-memes.git"
+    echo "    拉取聚合仓库 qq-cat-memes（含子模块）..."
+    if git clone --recursive --depth 1 "$AGG_URL" "$SRC" >/dev/null 2>&1; then
+      rm -rf "$SRC/.git"
+      # 子模块的 .git 也要清掉，避免它们被当成模板源目录扫描
+      find "$SRC" -maxdepth 2 -name '.git' -exec rm -rf {} + 2>/dev/null || true
+    else
+      warn "聚合仓库克隆失败，回退为直接克隆 4 个公开源仓库"
     fi
   fi
-  if [[ "$AGG_OK" -eq 0 ]]; then
+  if [[ ! -d "$SRC/meme_emoji" ]]; then
+    # 回退：直接克隆 4 个公开源仓库（无需令牌）
     for url in \
       "https://github.com/anyliew/meme_emoji" \
       "https://github.com/MemeCrafters/meme-generator-contrib" \
@@ -282,21 +290,27 @@ if command -v git >/dev/null 2>&1; then
       [[ -d "$dst" ]] && continue
       echo "    拉取扩展仓库：$url"
       git clone --depth 1 "$url" "$dst" >/dev/null 2>&1 || warn "拉取失败：$name"
+      rm -rf "$dst/.git"
     done
   fi
-  # 把各源的 memes/* 模板装载进 custom_memes
+  # 把各源的模板装载进 custom_memes。
+  # ★ 统一走 meme_sources.py：按内容自适应识别模板容器，
+  #   兼容 meme_emoji/crazy_emoji 的 emoji/ 布局与其余仓库的 memes/ 布局。
+  #   （早先的 shell 版只找 memes/，会把 emoji/ 布局的两个仓库静默漏掉 445 个模板。）
   if [[ -d "$SRC" ]]; then
-    for d in "$SRC"/*/; do
-      [[ -d "$d" ]] || continue
-      meme_dir="$d/memes"
-      [[ -d "$meme_dir" ]] || meme_dir="$d"
-      for m in "$meme_dir"/*/; do
-        [[ -f "$m/__init__.py" ]] || continue
-        tgt="$CUSTOM/$(basename "$m")"
-        [[ -d "$tgt" ]] || cp -r "$m" "$tgt"
-      done
-    done
-    ok "meme 素材装载完成"
+    LOADED=$("$PY" -c "
+import sys
+sys.path.insert(0, r'$ROOT')
+from bot.meme.meme_sources import sync_sources
+c, s, k, t = sync_sources(custom_dir=r'$CUSTOM', sources_dir=r'$SRC', verbose=False)
+print('%d %d %d %d' % (c, s, k, t))
+" 2>/dev/null | tail -1)
+    set -- $LOADED
+    if [[ -n "${4:-}" && "${4:-0}" -gt 0 ]]; then
+      ok "meme 素材装载完成：源仓库 ${4} 个模板（新复制/覆盖 ${1}，已最新 ${2}，本地独有保留 ${3}）"
+    else
+      warn "meme 素材装载数量为 0 —— 请检查 $SRC 是否为空"
+    fi
   fi
 else
   warn "未安装 git，跳过资源拉取"
@@ -304,10 +318,27 @@ fi
 
 # ---------- 9. 重建 meme 关键词 ----------
 step "第 9 步 / 共 9 步：重建 meme 关键词数据"
-if "$PY" bot/meme/rebuild_data.py >/dev/null 2>&1; then
+REBUILD_OK=0
+if "$PY" bot/meme/rebuild_meme_data.py --whitelist cache/meme_list_kw.txt >/dev/null 2>&1; then
+  # 死映射自检：重建脚本会在 KW 指向不存在模板时非零退出
+  REBUILD_OK=1
   ok "meme 关键词已重建"
+elif "$PY" bot/meme/rebuild_data.py >/dev/null 2>&1; then
+  REBUILD_OK=1
+  warn "已用旧脚本重建（新脚本失败），建议检查后重跑"
 else
   warn "重建失败（仓库自带一份 meme_data.py，可正常用；稍后用「meme更新」重试）"
+fi
+if [[ "$REBUILD_OK" -eq 1 ]]; then
+  "$PY" - <<'PYEOF' 2>/dev/null || true
+import sys
+sys.path.insert(0, ".")
+try:
+    from bot.meme import meme_data as md
+    print("    关键词 %d / 模板 %d" % (len(md.KW), len(md.META)))
+except Exception:
+    pass
+PYEOF
 fi
 
 # ---------- 完成 ----------
