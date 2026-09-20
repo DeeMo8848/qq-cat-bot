@@ -20,7 +20,7 @@ from urllib.parse import unquote
 
 from aiohttp import web
 
-from config import ROOT, STATIC_PORT
+from config import ROOT, STATIC_PORT, STATIC_BIND, _display_host
 
 _log = logging.getLogger("static")
 
@@ -304,7 +304,7 @@ async def start_static(port: int = STATIC_PORT):
     app.router.add_get("/{path:.*}", _serve)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, STATIC_BIND, port)
     await site.start()
-    print(f"[静态] 页面服务已启动: http://127.0.0.1:{port} （仅开放目录: {PUBLIC_DIR}）")
+    print(f"[静态] 页面服务已启动: {_display_host(STATIC_BIND, port)} （仅开放目录: {PUBLIC_DIR}）")
     return runner, site

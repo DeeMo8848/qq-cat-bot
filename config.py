@@ -75,6 +75,22 @@ MENU_KEYWORDS = _cfg("MENU_KEYWORDS", ["菜单", "帮助", "功能", "help"])
 WEBUI_PORT = int(_cfg("WEBUI_PORT", 9090))
 WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 
+# 各 HTTP 服务的绑定地址。默认只绑回环（最安全）：
+#   本机开发 + 内网穿透场景，只有 cloudflared 需要访问它们，绑 127.0.0.1 就够。
+# 公网服务器上想直接用 http://<公网IP>:端口 访问，需改成 "0.0.0.0"
+# （同时要在云安全组放行该端口，且强烈建议给 WebUI 设密码）。
+BIND_ADDR = _cfg("BIND_ADDR", "127.0.0.1")
+# 只想放开某一个服务时，可单独覆盖（留空表示沿用 BIND_ADDR）
+WEBUI_BIND = _cfg("WEBUI_BIND", BIND_ADDR)
+WEBHOOK_BIND = _cfg("WEBHOOK_BIND", BIND_ADDR)
+STATIC_BIND = _cfg("STATIC_BIND", BIND_ADDR)
+
+def _display_host(bind_addr: str, port: int) -> str:
+    """把 0.0.0.0/:: 这类"监听全部"的地址，显示成可点击的本机回环地址。"""
+    if bind_addr in ("0.0.0.0", "::", ""):
+        return f"http://127.0.0.1:{port}"
+    return f"http://{bind_addr}:{port}"
+
 # 静态页面服务（网页测试等）：仅开放 bot/public_html/ 目录，公网地址为隧道域名
 STATIC_PORT = int(_cfg("STATIC_PORT", 9092))
 STATIC_PUBLIC_URL = _cfg("STATIC_PUBLIC_URL", "https://page.deemo8848.dpdns.org")

@@ -19,6 +19,8 @@
   "WEBUI_PORT": 9090,
   "WEBHOOK_PORT": 9091,
   "STATIC_PORT": 9092,
+  "BIND_ADDR": "127.0.0.1",
+  "_comment_bind_addr": "三个 HTTP 服务的绑定地址。默认 127.0.0.1 = 只允许本机/隧道访问，最安全。若在公网服务器上想直接用 http://公网IP:端口 打开后台，改成 \"0.0.0.0\"（并务必在云安全组放行端口，同时强烈建议给后台设置访问密码）。也可用 WEBUI_BIND / WEBHOOK_BIND / STATIC_BIND 单独覆盖某一个。",
   "_comment_static": "静态页面服务端口：仅开放 bot/public_html/ 目录，公网地址经隧道域名 page.deemo8848.dpdns.org 访问，如需改端口需同步修改 tunnel/config.yml 里的路由。",
   "CARD_DIR": "",
   "_comment_card_dir": "cardforge 工具目录（含 cardforge.py）。留空时优先取 tools/cardforge（由 install.ps1 克隆），其次旧路径 D:\\略夹\\ai\\ai工具\\cardforge。",

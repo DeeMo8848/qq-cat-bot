@@ -15,7 +15,7 @@ import time
 
 from aiohttp import web
 
-from config import SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT
+from config import SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT, WEBHOOK_BIND
 from bot import commands
 from bot.core import state
 from plugins.meme import is_meme as meme_is_meme
@@ -295,6 +295,6 @@ async def start_webhook(api, port: int = WEBHOOK_PORT):
     server = WebhookServer(api, port=port)
     runner = web.AppRunner(server.app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, WEBHOOK_BIND, port)
     await site.start()
     return runner, site

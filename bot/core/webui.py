@@ -16,7 +16,7 @@ from bot import commands
 from plugins import randomimg
 from bot.core import state
 from bot.ai import ai as ai_mod
-from config import WEBUI_PORT, ROOT
+from config import WEBUI_PORT, ROOT, WEBUI_BIND, _display_host
 
 # 公网 IP 查询源（按顺序尝试；国内源在前，开代理/VPN 时比国际源稳得多）
 _IP_PROVIDERS = [
@@ -91,6 +91,9 @@ def _plugin_switch(key, title, names, sub):
 
 
 class WebUI:
+    # 对外绑定告警只打印一次（避免每条请求刷屏）
+    _warned = False
+
     def __init__(self, bot, tunnel=None):
         self.bot = bot
         self.tunnel = tunnel
@@ -126,9 +129,27 @@ class WebUI:
         self.app.router.add_post("/api/admin/users/reset_fishing", self.admin_users_reset_fishing)
         # 随机一图预览代理（供独立预览网页按 source 取一张图）
         self.app.router.add_get("/api/randomimg/preview", self.randomimg_preview)
+        self.app.middlewares.append(self._bind_guard)
         self._ip = None
         self._ip_time = 0.0
         self._ip_error_time = 0.0
+
+    @web.middleware
+    async def _bind_guard(self, request, handler):
+        """非回环绑定时打印一次告警：后台无鉴权，暴露到公网 = 任何人可操作。
+
+        不阻断请求（用户明确配置了 BIND_ADDR 就尊重该选择），只做醒目提醒，
+        避免"改了绑定地址却不知道后果"。
+        """
+        if WEBUI_BIND not in ("127.0.0.1", "localhost") and not WebUI._warned:
+            WebUI._warned = True
+            print("=" * 60)
+            print("[安全警告] WebUI 绑定在 %s，已对外网开放！" % WEBUI_BIND)
+            print("           后台【没有任何身份验证】，任何能访问该端口的人")
+            print("           都可以开关插件、改配置、操作玩家数据、关闭机器人。")
+            print("           请确认云安全组已限制来源 IP，或改用隧道访问。")
+            print("=" * 60)
+        return await handler(request)
 
     # ---------- 页面 ----------
     async def index(self, request):
@@ -1789,7 +1810,9 @@ async def start_webui(bot, port=WEBUI_PORT, tunnel=None):
     ui = WebUI(bot, tunnel=tunnel)
     runner = web.AppRunner(ui.app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, WEBUI_BIND, port)
     await site.start()
-    print(f"[UI] 后台已启动: http://127.0.0.1:{port}")
+    print(f"[UI] 后台已启动: {_display_host(WEBUI_BIND, port)}")
+    if WEBUI_BIND not in ("127.0.0.1", "localhost"):
+        print(f"     绑定地址 {WEBUI_BIND}（对外开放，建议在 settings.json 配置后台访问密码）")
     return runner, site
