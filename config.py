@@ -15,6 +15,7 @@ import json
 import glob as _glob
 import os
 import shutil
+import sys
 
 # 项目根目录：config.py 位于项目根，__file__ 所在目录即根目录。
 # 其他模块需要定位项目内文件时统一从这里取，避免因文件搬家修改 dirname 层数。
@@ -78,8 +79,8 @@ WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 STATIC_PORT = int(_cfg("STATIC_PORT", 9092))
 STATIC_PUBLIC_URL = _cfg("STATIC_PUBLIC_URL", "https://page.deemo8848.dpdns.org")
 
-# 执行 meme worker / B站渲染子进程所用的 Python（默认取 PATH 里的 python）
-PYTHON = _cfg("PYTHON", "python")
+# 执行 meme worker / B站渲染子进程所用的 Python —— 见文件末尾统一解析
+# （默认取当前解释器 sys.executable，避免 PATH 里没有 python 命令导致子进程失败）
 
 
 # ---- 与 VPN / 代理客户端共存（实现见 bot/core/vpn_bypass.py）----
@@ -115,32 +116,74 @@ EAT_ECHO_COOLDOWN_SECONDS = int(_cfg("EAT_ECHO_COOLDOWN_SECONDS", 15))      # �
 EAT_FOOD_IMAGES_DIR = _cfg("EAT_FOOD_IMAGES_DIR", "")              # 食物配图目录：放 "{食物}.jpg" 之类即可图文同发
 
 
-# ---- 外部可执行文件解析：项目 tools/ → 旧路径 → PATH ----
-_BBDOWN_LEGACY = r"D:\略夹\BBd\BBDown.exe"
-_FFMPEG_LEGACY = r"D:\略夹\BBd\ffmpeg.exe"
+# ---- 外部可执行文件解析：项目 tools/ → 旧路径 / 系统目录 → PATH ----
+# 跨平台：Windows 找 *.exe，Linux 找无后缀文件。
+# 注意 Windows 的旧硬编码路径只在 Windows 上尝试，Linux 上走 PATH 与常见安装位置。
+
+_IS_WINDOWS = os.name == "nt"
+_EXE_SUFFIX = ".exe" if _IS_WINDOWS else ""
+
+if _IS_WINDOWS:
+    _BBDOWN_LEGACY = r"D:\略夹\BBd\BBDown.exe"
+    _FFMPEG_LEGACY = r"D:\略夹\BBd\ffmpeg.exe"
+    _BBDOWN_LEGACY_DIR = r"D:\略夹\BBd"
+else:
+    # Linux：优先用系统包管理器装的位置，其次 PATH
+    _BBDOWN_LEGACY = "/usr/local/bin/BBDown"
+    _FFMPEG_LEGACY = "/usr/bin/ffmpeg"
+    _BBDOWN_LEGACY_DIR = "/usr/local/bin"
+
+# Linux 上额外扫描这些目录（apt 装的 ffmpeg / 手动放的 BBDown）
+_EXTRA_BIN_DIRS = [] if _IS_WINDOWS else ["/usr/bin", "/usr/local/bin", "/opt/ffmpeg/bin", "/snap/bin"]
 
 
 def _find_in_tools(basename: str) -> str | None:
-    pat = os.path.join(TOOLS_DIR, "**", basename)
-    m = _glob.glob(pat, recursive=True)
-    return m[0] if m else None
+    """在项目 tools/ 下递归查找工具，按当前平台匹配后缀。"""
+    cand = []
+    if _EXE_SUFFIX:
+        cand.append(basename + _EXE_SUFFIX)
+    else:
+        # Linux：先找无后缀，再兼容误放的 .exe
+        cand += [basename, basename + ".exe"]
+    for name in cand:
+        m = _glob.glob(os.path.join(TOOLS_DIR, "**", name), recursive=True)
+        # 过滤掉非文件与 Linux 下不可执行的
+        for p in m:
+            if os.path.isfile(p):
+                return p
+    return None
 
 
 def _resolve_exe(override: str | None, name: str, legacy: str, fallback_cmd: str) -> str:
     if override and os.path.isfile(override):
-        return override
-    in_tools = _find_in_tools(name + ".exe")
+        return os.path.abspath(override)
+    in_tools = _find_in_tools(name)
     if in_tools:
-        return in_tools
+        return os.path.abspath(in_tools)
     if legacy and os.path.isfile(legacy):
-        return legacy
+        return os.path.abspath(legacy)
+    # 常见系统目录（Linux）
+    for d in _EXTRA_BIN_DIRS:
+        p = os.path.join(d, name + _EXE_SUFFIX)
+        if os.path.isfile(p):
+            return os.path.abspath(p)
+    # PATH 查找：shutil.which 在 Windows 上对相对项可能返回 './x.EXE'，需校验真实存在
     w = shutil.which(name)
-    return w if w else fallback_cmd
+    if w and os.path.isfile(w):
+        return os.path.abspath(w)
+    # 都没找到：返回裸命令名，交给子进程按 PATH 解析（并在调用处做可用性检查）
+    return fallback_cmd
 
 
 BBDOWN_EXE = _resolve_exe(_cfg("BBDOWN_EXE", ""), "BBDown", _BBDOWN_LEGACY, "BBDown")
 BBDOWN_DIR = os.path.dirname(BBDOWN_EXE) if os.path.sep in BBDOWN_EXE else ""
 # BBDown 登录态（BBDown.data）的来源：用户手动登录用的 BBDown 所在目录。
 # bot 运行时会把它同步到 BBDOWN_DIR，避免未登录导致解析受限；cookie 过期后重新登录即自动续期。
-BBDOWN_COOKIE_SRC = _cfg("BBDOWN_COOKIE_SRC", os.path.dirname(_BBDOWN_LEGACY) if _BBDOWN_LEGACY else "")
+BBDOWN_COOKIE_SRC = _cfg("BBDOWN_COOKIE_SRC", _BBDOWN_LEGACY_DIR)
 FFMPEG_EXE = _resolve_exe(_cfg("FFMPEG_EXE", ""), "ffmpeg", _FFMPEG_LEGACY, "ffmpeg")
+
+# cloudflared 可执行文件（内网穿透），空表示未找到
+CLOUDFLARED_EXE = _resolve_exe(_cfg("CLOUDFLARED_EXE", ""), "cloudflared", "", "cloudflared")
+
+# meme 子进程 / 其他脚本用的解释器：默认取当前运行的 Python，比裸 "python" 更可靠
+PYTHON = _cfg("PYTHON", sys.executable or "python")

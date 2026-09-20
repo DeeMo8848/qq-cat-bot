@@ -318,9 +318,16 @@ _started = False
 
 
 def start_auto(interval=None):
-    """后台巡检：订阅更新 / 客户端重启导致规则丢失时自动补回。"""
+    """后台巡检：订阅更新 / 客户端重启导致规则丢失时自动补回。
+
+    仅在 Windows 生效：该问题源于「猫猫云」等 Windows 代理客户端的 TUN 模式；
+    Linux 服务器上没有这类客户端，无需注入规则，直接跳过以免做无谓的探测与报错。
+    """
     global _started
     if not VPN_BYPASS_ENABLED or _started:
+        return
+    if os.name != "nt":
+        _log("非 Windows 系统，跳过代理共存保障（该机制仅针对本机 Clash 系客户端）")
         return
     _started = True
     gap = int(interval or VPN_BYPASS_INTERVAL)

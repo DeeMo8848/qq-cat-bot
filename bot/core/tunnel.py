@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""cloudflared 内网穿透管理：自动启动隧道、解析公网回调地址。"""
+"""cloudflared 内网穿透管理：自动启动隧道、解析公网回调地址。
+
+跨平台：Windows 用 cloudflared.exe，Linux 用 cloudflared；
+进程检测 Windows 走 tasklist、Linux 走 pgrep（见 bot/core/platform.py）。
+"""
 
 import os
 import re
@@ -7,10 +11,13 @@ import subprocess
 import threading
 import time
 
-from config import ROOT
+from config import ROOT, CLOUDFLARED_EXE
+
+from bot.core import platform as _plat
 
 _BASE_DIR = ROOT
-_CFD_EXE = os.path.join(_BASE_DIR, "cloudflared.exe")
+# cloudflared 可执行文件：优先 settings.json 指定 / 项目 tools/ / 项目根 / 系统 PATH
+_CFD_EXE = CLOUDFLARED_EXE
 _LOG_FILE = os.path.join(_BASE_DIR, "cloudflared.log")
 
 # 具名隧道固定信息：隧道名、配置文件、稳定公网地址（不再用随机 trycloudflare）
@@ -22,6 +29,14 @@ _URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
 # 模块级单例，方便 sender 等模块随时取当前公网地址
 _manager = None
+
+
+def _cloudflared_available() -> bool:
+    """cloudflared 是否可用：绝对路径校验文件存在；裸命令名则查 PATH。"""
+    if os.path.sep in _CFD_EXE or (os.altsep and os.altsep in _CFD_EXE):
+        return os.path.isfile(_CFD_EXE)
+    import shutil
+    return shutil.which(_CFD_EXE) is not None
 
 
 def set_manager(manager):
@@ -47,36 +62,28 @@ class TunnelManager:
         if self._is_running():
             self.url = _TUNNEL_URL
             return
-        if not os.path.exists(_CFD_EXE):
-            print("[隧道] 未找到 cloudflared.exe，跳过内网穿透（回调地址不可用）")
+        if not _cloudflared_available():
+            print("[隧道] 未找到 cloudflared，跳过内网穿透（回调地址不可用）")
+            print("        安装：Windows 放到项目根或 tools/；Linux 见 deploy/install.sh")
             return
         log = open(_LOG_FILE, "a", encoding="utf-8", errors="replace")
-        # DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP：让 cloudflared 脱离机器人进程
-        # 的进程组独立运行，这样重启机器人时不会被连带杀掉、地址保持不变。
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        # 让 cloudflared 脱离机器人进程组独立运行，这样重启机器人时不会被连带杀掉、
+        # 地址保持不变。Windows 用 DETACHED_PROCESS，Linux 用 setsid（见 platform.py）。
+        kwargs = _plat.popen_kwargs_detached()
         self.proc = subprocess.Popen(
             [_CFD_EXE, "tunnel", "--config", _TUNNEL_CONFIG, "--protocol", "http2", "run", _TUNNEL_NAME],
             stdout=log,
             stderr=subprocess.STDOUT,
-            creationflags=creationflags,
-            close_fds=True,
+            **kwargs,
         )
         self.url = _TUNNEL_URL
         print(f"[隧道] cloudflared 具名隧道已启动，公网地址: {_TUNNEL_URL}（日志: {_LOG_FILE}）")
         threading.Thread(target=self._watch_log, daemon=True).start()
 
     def _is_running(self):
-        # 用字节模式采集，避免中文 Windows 上 tasklist 的 GBK 输出被当 utf-8 解码而在后台线程抛 UnicodeDecodeError
-        try:
-            res = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq cloudflared.exe"],
-                capture_output=True, timeout=10,
-            )
-            return b"cloudflared.exe" in res.stdout
-        except Exception:
-            return False
+        # 按进程名判断（Windows tasklist / Linux pgrep），避免中文 Windows 的 GBK 输出
+        # 被当 utf-8 解码而在后台线程抛 UnicodeDecodeError
+        return _plat.process_running("cloudflared")
 
     def _load_existing_url(self):
         self.url = _TUNNEL_URL

@@ -36,17 +36,37 @@
 
 ### 1. 前置要求
 
-- Windows + Python 3.10+（已加到 PATH）
+- **Windows** + Python 3.10+（已加到 PATH）
+  或 **Linux**（含阿里云等云服务器，2 核 2G 可跑，见 [deploy/README.md](deploy/README.md)）
 - `git`（拉取图库与 meme 素材必需）
 - 一个已通过审核的 QQ 开放平台机器人（拿到 AppID / AppSecret）
 - 两个资源仓库为**私有**仓库，拉取需一个 GitHub 令牌（PAT，勾选 `repo` 权限）
 
+> **Windows / Linux 用同一份代码**，平台差异收敛在 `bot/core/platform.py`。
+> Windows 用下面的 `install.ps1`，Linux 用 `deploy/install.sh`，职责完全对应。
+
 ### 2. 运行安装脚本
 
-在项目根目录打开 PowerShell：
+**Windows** —— 在项目根目录打开 PowerShell：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -GitToken "ghp_你的令牌"
+```
+
+**Linux / 云服务器** —— 两条命令搞定：
+
+```bash
+git clone https://github.com/DeeMo8848/qq-cat-bot.git && cd qq-cat-bot
+bash deploy/install.sh --token ghp_你的令牌
+```
+
+> Linux 完整部署说明（含开机自启、进程守护、2G 内存优化）
+> 见 **[deploy/README.md](deploy/README.md)**。
+
+不想用 git 拉取的，也可以打包后上传：
+
+```bash
+bash deploy/make_package.sh     # 生成 dist/qqbot-<日期>.zip
 ```
 
 > 若 `git` 已登录且对私有仓库有权限，可省略 `-GitToken`；不带令牌时图库与 meme 聚合仓库会改用公开源仓库回退拉取。
@@ -82,11 +102,27 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -GitToken "ghp_你的令�
 
 ### 4. 启动
 
+**Windows：**
+
 ```bat
 start.bat        # 或：python -u main.py
 ```
 
+**Linux：**
+
+```bash
+bash deploy/start.sh              # 前台运行
+bash deploy/start.sh --daemon     # 后台运行，日志写入 logs/bot.log
+```
+
 看到 `[OK] 机器人已上线` 即成功。之后在 QQ 私聊或群里 @机器人 即可。
+
+> **崩溃自愈 / 开机自启**：Linux 用 `sudo bash deploy/service.sh install`（systemd）；
+> Windows 用 `run-loop.bat`（退出自动重启）。
+> 两者都是**独立程序**，不会随 bot 启动，方便你想关就关。
+
+> **远程更新**：在 QQ 里发 **`bot更新`**（或 `喵喵更新`，仅管理员/协助者），
+> bot 会自动从 GitHub 拉取最新代码并重启。发 `bot版本` 可只查看版本。
 
 > 💡 **免 @ 与解锁完整功能**：若在 QQ 开放平台为机器人开启 **「主动消息 (active message)」** 同时也开启 **「全量消息 (完整消息内容)」**，
 > 群内即可**无需 @ / 免 @机器人** 触发命令（默认也放开了「仅管理员」限制，任意群成员都可触发）；同时解锁需要完整消息内容的进阶功能。
@@ -111,21 +147,34 @@ start.bat        # 或：python -u main.py
 ## 📦 项目结构
 
 ```
-config.py               # 配置加载(从 settings.json) + 工具路径解析
+config.py               # 配置加载(从 settings.json) + 工具路径解析（跨平台）
 settings.example.json   # 配置模板（真实文件 settings.json 不入库）
-install.ps1             # 一键安装：检测/下载环境依赖 + 拉取图库/meme 资源
+install.ps1             # Windows 一键安装：检测/下载环境依赖 + 拉取图库/meme 资源
 main.py                 # 入口：启动连接、监听事件、分发
-start.bat / 启动bot.bat # 启动脚本（后者含本机路径，不入库）
+start.bat / 启动bot.bat # Windows 启动脚本（后者含本机路径，不入库）
+run-loop.bat            # Windows 守护：bot 退出后自动重启（独立运行）
 requirements.txt        # Python 依赖
 命令清单.md / meme_清单.md
-tools/                  # BBDown、ffmpeg（由 install.ps1 下载，不入库）
-resources/              # 图库克隆(龙图等)，由 install.ps1 拉取，不入库
+deploy/                 # Linux 部署脚本（install/start/watchdog/service/打包）
+  install.sh            #   一键环境准备（对应 install.ps1）
+  start.sh              #   启动/停止
+  watchdog.sh           #   进程守护（手动启停）
+  service.sh            #   systemd 服务（开机自启）
+  make_package.sh       #   打部署包
+  README.md             #   Linux 部署详细文档
+tools/                  # BBDown、ffmpeg（由安装脚本下载，不入库）
+resources/              # 图库克隆(龙图等)，由安装脚本拉取，不入库
 bot/
-  core/                 # 平台连接、webhook、tunnel、webui(?)、命令注册框架
+  core/                 # 平台连接、webhook、tunnel、webui、命令注册框架
+    platform.py         #   ★ 跨平台适配层（路径/进程/字体/重启方式）
   commands/             # 各功能命令（bilibili / meme / randomimg / ai 等）
   parse/                # 多平台链接解析（移植自 astrbot 解析插件）
   meme/                 # meme 生成框架封装 + worker + 关键词数据 + custom_memes
   ai/                   # AI 对话（OpenAI 兼容 API）
+plugins/
+  selfupdate/           # ★ bot更新 / bot版本 命令（git pull + 自动重启）
+  bilibili/             # B站解析 + BBDown 登录桥接
+  cards/ fishing/ ...   # 卡牌、钓鱼等玩法插件
 ```
 
 ---

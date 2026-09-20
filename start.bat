@@ -8,6 +8,10 @@ rem     2) Windows 的 py 启动器（取其真实解释器路径，并再探测 botpy）
 rem     3) 本机已知的 TRAE 运行时（开发机兜底）
 rem
 rem  首次部署前先运行:  install.ps1
+rem
+rem  ★ 需要「退出后自动重启」（配合「bot更新」热重启 / 崩溃自愈）时，
+rem     请改用 run-loop.bat，它会在本脚本之外再套一层重启循环。
+rem     本脚本保持原行为：程序退出即结束，方便你想停就停。
 rem ============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"

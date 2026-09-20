@@ -286,3 +286,4 @@ from plugins import downloadimg  # noqa: E402,F401
 from plugins import fishing  # noqa: E402,F401
 from plugins import webtest  # noqa: E402,F401
 from plugins import cards  # noqa: E402,F401
+from plugins import selfupdate  # noqa: E402,F401

@@ -5,10 +5,11 @@
 #   1. 检测 Python，安装 requirements.txt + meme-generator==0.1.14（固定版本，勿升 rs 版）
 #   2. 下载 BBDown 1.6.3 到 tools/BBDown/
 #   3. 下载 ffmpeg 到 tools/ffmpeg/
-#   4. 克隆 cardforge（卡牌制作工具）到 tools/cardforge/
-#   5. 生成 settings.json（从 settings.example.json 复制，需手动填入凭据）
-#   6. 克隆「图库仓库」到 resources/image_lib（龙图目录自动使用其 dragon/ 子目录）
-#   7. 拉取 meme 素材：优先克隆聚合仓库 qq-cat-memes（含子模块），失败则直接克隆公开源仓库
+#   4. 下载 cloudflared 到项目根（内网穿透）
+#   5. 克隆 cardforge（卡牌制作工具）到 tools/cardforge/
+#   6. 生成 settings.json（从 settings.example.json 复制，需手动填入凭据）
+#   7. 克隆「图库仓库」到 resources/image_lib（龙图目录自动使用其 dragon/ 子目录）
+#   8. 拉取 meme 素材：优先克隆聚合仓库 qq-cat-memes（含子模块），失败则直接克隆公开源仓库
 #
 #  用法（在本目录执行）：
 #     powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -104,6 +105,21 @@ if (Test-Path $ffExe) {
     if (-not $found) { Write-Host "ffmpeg 解压后未找到 ffmpeg.exe，请手动下载放到 $ffDir" -ForegroundColor Red; exit 1 }
     Copy-Item $found.FullName $ffExe -Force
     Write-Host "ffmpeg 就绪: $ffExe"
+}
+
+Write-Step "第 3 步 / 共 8 步：下载 cloudflared（内网穿透）"
+$cfdBin = Join-Path $Root "cloudflared.exe"
+if (Test-Path $cfdBin) {
+    Write-Host "cloudflared 已存在，跳过。"
+} else {
+    Write-Host "下载 cloudflared ..."
+    try {
+        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $cfdBin
+        Write-Host "cloudflared 就绪: $cfdBin"
+    } catch {
+        Write-Host "cloudflared 下载失败。若不需要内网穿透（Webhook 回调）可忽略；" -ForegroundColor Yellow
+        Write-Host "否则请手动下载 cloudflared-windows-amd64.exe 放到项目根并改名为 cloudflared.exe" -ForegroundColor Yellow
+    }
 }
 
 # ---------- 4. cardforge（卡牌制作工具）----------
