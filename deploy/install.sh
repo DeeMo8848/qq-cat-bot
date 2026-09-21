@@ -17,6 +17,7 @@
 #     bash deploy/install.sh
 #     bash deploy/install.sh --token ghp_xxx     # 拉私有资源仓库需令牌
 #     bash deploy/install.sh --skip-tools        # 跳过 exe 下载（已自备）
+#     bash deploy/install.sh --no-mirror         # 不强制国内 pip 镜像源
 # =====================================================================
 set -uo pipefail
 
@@ -27,6 +28,7 @@ cd "$ROOT" || exit 1
 
 GIT_TOKEN=""
 SKIP_TOOLS=0
+NO_MIRROR=0
 PY=""
 
 BLUE='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; NC='\033[0m'
@@ -39,6 +41,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --token) GIT_TOKEN="$2"; shift 2 ;;
     --skip-tools) SKIP_TOOLS=1; shift ;;
+    --no-mirror) NO_MIRROR=1; shift ;;
     --python) PY="$2"; shift 2 ;;
     *) warn "未知参数：$1"; shift ;;
   esac
@@ -223,16 +226,110 @@ fi
 step "第 6 步 / 共 9 步：克隆 cardforge（卡牌制作工具）"
 CF_DIR="$TOOLS/cardforge"
 if [[ -f "$CF_DIR/cardforge.py" ]]; then
-  ok "cardforge 已存在，跳过"
+  ok "cardforge 已存在，跳过克隆"
 elif ! command -v git >/dev/null 2>&1; then
   warn "未安装 git，跳过（可在 settings.json 的 CARD_DIR 指定已有目录）"
 else
   CF_URL="https://github.com/DeeMo8848/cardforge.git"
   [[ -n "$GIT_TOKEN" ]] && CF_URL="https://x-access-token:${GIT_TOKEN}@github.com/DeeMo8848/cardforge.git"
   if git clone --depth 1 "$CF_URL" "$CF_DIR" >/dev/null 2>&1; then
-    ok "cardforge 就绪（首次做卡自动装依赖）"
+    ok "cardforge 就绪"
   else
     warn "cardforge 克隆失败（私有仓库需 --token）"
+  fi
+fi
+
+# ---------- 6b. 项目级共享 venv ----------
+# ★ 共享 venv 放在 $TOOLS/.venv，由所有「需要独立依赖的工具」复用（目前是 cardforge）。
+#   位置固定、不入库，见 bot/core/venv.py。cardforge 通过 CARDFORGE_VENV 环境变量
+#   或它自己 settings.json 的 venv 字段指向这里，不必在自身目录再建一份。
+step "第 6 步(附) / 共 9 步：准备项目级共享 venv 与 cardforge 依赖"
+SHARED_VENV="$TOOLS/.venv"
+CF_REQ="$CF_DIR/requirements.txt"
+
+if [[ ! -f "$CF_DIR/cardforge.py" ]]; then
+  warn "cardforge 不存在，跳过共享 venv 准备"
+elif [[ -x "$SHARED_VENV/bin/python" ]]; then
+  ok "共享 venv 已存在：$SHARED_VENV"
+else
+  echo "    创建共享 venv：$SHARED_VENV"
+  if "$PY" -m venv "$SHARED_VENV" 2>/dev/null; then
+    ok "共享 venv 已创建"
+  else
+    warn "创建 venv 失败（Debian/Ubuntu 可能缺少 python3-venv：apt install python3-venv）"
+    warn "卡牌制作将不可用，其余功能不受影响"
+  fi
+fi
+
+if [[ -x "$SHARED_VENV/bin/python" && -f "$CF_REQ" ]]; then
+  # 依赖较大（rembg + onnxruntime），已装过则跳过
+  if "$SHARED_VENV/bin/python" -c "import rembg, onnxruntime" >/dev/null 2>&1; then
+    ok "cardforge 依赖已就绪，跳过"
+  else
+    echo "    安装 cardforge 依赖（rembg / onnxruntime，体积较大，请耐心等待）..."
+    # 国内服务器走清华源快得多；可用 --no-index 关闭
+    CF_INDEX=""
+    [[ "$NO_MIRROR" -eq 0 ]] && CF_INDEX="-i https://pypi.tuna.tsinghua.edu.cn/simple"
+    # ★ 不接管道判退出码 —— $? 会变成管道的，装失败也会误报成功
+    RC=0
+    "$SHARED_VENV/bin/python" -m pip install $CF_INDEX -r "$CF_REQ" -q || RC=$?
+    if [[ "$RC" -eq 0 ]]; then
+      ok "cardforge 依赖安装完成"
+    else
+      warn "cardforge 依赖安装失败（退出码 $RC），卡牌制作暂不可用"
+      warn "可稍后手动重试：$SHARED_VENV/bin/python -m pip install -r $CF_REQ"
+    fi
+  fi
+
+  # 把 venv 位置写回 cardforge 的 settings.json，便于它被独立调用时也走同一个环境
+  "$SHARED_VENV/bin/python" - "$CF_DIR" "$SHARED_VENV" <<'PYEOF' 2>/dev/null || true
+import json, os, sys
+root, venv = sys.argv[1], sys.argv[2]
+path = os.path.join(root, "settings.json")
+cfg = {}
+if os.path.isfile(path):
+    try:
+        cfg = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        cfg = {}
+if cfg.get("venv") != venv:
+    cfg["venv"] = venv
+    try:
+        json.dump(cfg, open(path, "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+PYEOF
+
+  # 素材完整性检查：cardforge 的 assets/ 若只有零星文件，说明素材没随仓库带上
+  if [[ -d "$CF_DIR/assets" ]]; then
+    N_BG=$(find "$CF_DIR/assets/backgrounds" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    N_FR=$(find "$CF_DIR/assets/frames" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    if [[ "${N_BG:-0}" -lt 5 || "${N_FR:-0}" -lt 3 ]]; then
+      warn "cardforge 素材似乎不完整（背景 ${N_BG} / 边框 ${N_FR}）"
+      warn "若素材在独立仓库，请手动补齐到 $CF_DIR/assets/"
+    else
+      ok "cardforge 素材就绪（背景 ${N_BG} / 边框 ${N_FR}）"
+    fi
+  fi
+
+  # ★ 内存体检：本地抠图模型对内存要求高，小内存机器硬跑会把整机拖入 OOM 僵死。
+  #   2026-09-21 事故：1.6GB 的 ECS 上跑 BiRefNet-lite，机器完全无响应
+  #   （TCP 能连、应用层零回应），且**不会自行恢复** —— 干等无效，
+  #   最终只能登录云控制台强制重启整台服务器。
+  #   cardforge 侧已有运行时守卫（engine.py 的 _mem_guard 自动降级），
+  #   这里再在部署期提醒一次，让人提前决定是否改用抠图 API。
+  MEM_MB=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if [[ "${MEM_MB:-0}" -gt 0 ]]; then
+    if [[ "$MEM_MB" -lt 1200 ]]; then
+      warn "本机可用内存仅 ${MEM_MB}MB —— 本地抠图会自动降级到小模型或改为不抠图"
+      warn "若需高质量抠图，请在 cardforge/settings.json 配置 matting_api（阿里云分割抠图）"
+      warn "或把部署迁到内存 ≥2GB 的机器"
+    elif [[ "$MEM_MB" -lt 2500 ]]; then
+      warn "本机可用内存 ${MEM_MB}MB —— 本地抠图可用，但建议避开超大图，或改用抠图 API"
+    else
+      ok "内存充足（可用 ${MEM_MB}MB），本地抠图可正常运行"
+    fi
   fi
 fi
 

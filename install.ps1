@@ -135,9 +135,105 @@ if (Test-Path (Join-Path $cfDir "cardforge.py")) {
     if ($GitToken) { $cfUrl = "https://x-access-token:$GitToken@github.com/DeeMo8848/cardforge.git" }
     git clone --depth 1 $cfUrl $cfDir 2>&1 | Out-Null
     if (Test-Path (Join-Path $cfDir "cardforge.py")) {
-        Write-Host "cardforge 就绪: $cfDir（首次制作卡牌时自动安装依赖与抠图模型）"
+        Write-Host "cardforge 就绪: $cfDir"
     } else {
         Write-Host "cardforge 克隆失败。可在 settings.json 的 CARD_DIR 指定已有目录。" -ForegroundColor Yellow
+    }
+}
+
+# ---------- 4b. 项目级共享 venv ----------
+# ★ 共享 venv 放在 tools\.venv，由所有「需要独立依赖的工具」复用（目前是 cardforge）。
+#   位置固定、不入库，见 bot/core/venv.py。cardforge 通过 CARDFORGE_VENV 环境变量
+#   或它自己 settings.json 的 venv 字段指向这里，不必在自身目录再建一份。
+Write-Step "第 4 步(附) / 共 8 步：准备项目级共享 venv 与 cardforge 依赖"
+$sharedVenv = Join-Path $tools ".venv"
+$sharedPy   = Join-Path $sharedVenv "Scripts\python.exe"
+$cfReq      = Join-Path $cfDir "requirements.txt"
+
+if (-not (Test-Path (Join-Path $cfDir "cardforge.py"))) {
+    Write-Host "cardforge 不存在，跳过共享 venv 准备。" -ForegroundColor Yellow
+} else {
+    if (-not (Test-Path $sharedPy)) {
+        Write-Host "创建共享 venv: $sharedVenv"
+        & $Py -m venv $sharedVenv
+    }
+    if (-not (Test-Path $sharedPy)) {
+        Write-Host "创建共享 venv 失败，卡牌制作将不可用（其余功能不受影响）。" -ForegroundColor Yellow
+    } else {
+        Write-Host "共享 venv 就绪: $sharedVenv"
+        # 依赖较大（rembg + onnxruntime），已装过则跳过
+        $cfDepsOk = $false
+        if (Test-Path $cfReq) {
+            & $sharedPy -c "import rembg, onnxruntime" 2>$null
+            if ($LASTEXITCODE -eq 0) { $cfDepsOk = $true }
+        }
+        if ($cfDepsOk) {
+            Write-Host "cardforge 依赖已就绪，跳过。"
+        } elseif (Test-Path $cfReq) {
+            Write-Host "安装 cardforge 依赖（rembg / onnxruntime，体积较大，请耐心等待）..."
+            & $sharedPy -m pip install --upgrade pip -q 2>$null
+            & $sharedPy -m pip install -r $cfReq -q
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "cardforge 依赖安装完成。"
+            } else {
+                Write-Host "cardforge 依赖安装失败，卡牌制作暂不可用。" -ForegroundColor Yellow
+                Write-Host "可稍后手动重试: $sharedPy -m pip install -r $cfReq" -ForegroundColor Yellow
+            }
+        }
+        # 把 venv 位置写回 cardforge 的 settings.json，便于它被独立调用时也走同一环境
+        # （路径含中文/空格，用临时 py 文件而非 here-string 传参，避免引号转义问题）
+        $fixVenvPy = Join-Path $env:TEMP "cf_fix_venv_$PID.py"
+        @"
+import json, os, sys
+root, venv = sys.argv[1], sys.argv[2]
+path = os.path.join(root, "settings.json")
+cfg = {}
+if os.path.isfile(path):
+    try:
+        cfg = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        cfg = {}
+if cfg.get("venv") != venv:
+    cfg["venv"] = venv
+    try:
+        json.dump(cfg, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+"@ | Set-Content -Path $fixVenvPy -Encoding UTF8
+        & $sharedPy $fixVenvPy $cfDir $sharedVenv 2>$null
+        Remove-Item $fixVenvPy -Force -ErrorAction SilentlyContinue
+
+        # 素材完整性检查
+        $bgDir = Join-Path $cfDir "assets\backgrounds"
+        $frDir = Join-Path $cfDir "assets\frames"
+        $nBg = 0; $nFr = 0
+        if (Test-Path $bgDir) { $nBg = (Get-ChildItem $bgDir -File -ErrorAction SilentlyContinue).Count }
+        if (Test-Path $frDir) { $nFr = (Get-ChildItem $frDir -File -ErrorAction SilentlyContinue).Count }
+        if ($nBg -lt 5 -or $nFr -lt 3) {
+            Write-Host "cardforge 素材似乎不完整（背景 $nBg / 边框 $nFr）。" -ForegroundColor Yellow
+            Write-Host "若素材在独立仓库，请手动补齐到 $cfDir\assets\" -ForegroundColor Yellow
+        } else {
+            Write-Host "cardforge 素材就绪（背景 $nBg / 边框 $nFr）。"
+        }
+
+        # ★ 内存体检：本地抠图模型吃内存，小内存机器硬跑会被 OOM 拖死整机
+        #   （2026-09-21 在 1.6GB ECS 上跑 BiRefNet-lite 导致机器完全无响应）。
+        #   cardforge 侧有运行时守卫（engine.py 的 _mem_guard 自动降级），
+        #   这里部署期再提醒一次。
+        try {
+            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+            $memMb = [int]($os.FreePhysicalMemory / 1024)
+            if ($memMb -lt 1200) {
+                Write-Host "本机可用内存仅 ${memMb}MB —— 本地抠图会自动降级到小模型或改为不抠图。" -ForegroundColor Yellow
+                Write-Host "若需高质量抠图，请在 cardforge\settings.json 配置 matting_api（阿里云分割抠图）。" -ForegroundColor Yellow
+            } elseif ($memMb -lt 2500) {
+                Write-Host "本机可用内存 ${memMb}MB —— 本地抠图可用，但建议避开超大图或改用抠图 API。" -ForegroundColor Yellow
+            } else {
+                Write-Host "内存充足（可用 ${memMb}MB），本地抠图可正常运行。"
+            }
+        } catch {
+            # 取不到内存信息就静默跳过，不影响安装
+        }
     }
 }
 

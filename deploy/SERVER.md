@@ -80,6 +80,103 @@ cp -rn src/meme-generator-0.1.14/resources/. $SP/meme_generator/resources/
 - 实测 **12.3.0 下三者都能 import 且出图正常**
 - **若 meme 出图异常，第一个怀疑 Pillow 版本**，退到 11.x
 
+### 6. pycairo（5000兆等渐变 meme 需要）
+```bash
+cd /root/qq-cat-bot && .venv/bin/pip install pycairo
+```
+> 缺它时带渐变/描边的 meme（如 `5000choyen`）会直接报
+> 「缺少必要的依赖库 'pycairo'」。容器里 cairo 开发库本来就有，源码编译即可。
+
+### 7. ★ 中文字体不用装 —— 项目自带字体包
+
+`bot/assets/fonts/` 是**入库的项目资产**，随仓库分发，服务器**无需安装任何中文字体**：
+
+| 文件 | 内容 | 体积 |
+|---|---|---|
+| `qqbot-fonts.ttc` | 中文字体集合，含 21 个族名别名（`Noto Sans SC` / `FZShaoEr-M11S` 等） | 3.6MB |
+| `NotoColorEmoji.ttf` | 彩色 emoji（Noto Color Emoji，OFL-1.1） | 10.2MB |
+
+启动时 `main.py` 会自动调用 `bot.core.fonts.install()` 把它注入 Skia 的
+全局 FontManager，供所有**按族名查字体**的渲染路径（meme 等）使用。
+
+> **为什么必须自带**：`meme_generator` 一个字体文件都不带，127 个模板硬编码引用
+> `FZShaoEr-M11S`(72个) / `FZXS14`(27) 等族名；干净的 Linux 服务器上 Skia 只有
+> `Noto Sans` 一个拉丁族 → 匹配不到 → 落到无 CJK 字形的兜底字体 → **文字全是「口口口」**。
+>
+> **重新生成字体包**：`python bot/meme/build_font_bundle.py`
+> **自检**：`python -c "from bot.core import fonts; print(fonts.families())"` 应列出 22 个族名。
+
+### 8. ★ 项目级共享 venv（`tools/.venv`）
+
+给「需要独立依赖环境的工具」复用，目前只有 **cardforge**（rembg + onnxruntime）。
+
+```bash
+ls -d /root/qq-cat-bot/tools/.venv            # 应存在
+/root/qq-cat-bot/tools/.venv/bin/python -c "import rembg, onnxruntime; print('OK')"
+```
+
+- **位置固定** `tools/.venv`（跨平台），由 `bot/core/venv.py` 统一解析，不入库
+- cardforge 通过环境变量 `CARDFORGE_VENV` 或它自己 `settings.json` 的 `venv` 字段指过来，
+  **不在它自己目录里另建一份**
+- `deploy/install.sh` 会在克隆 cardforge 后自动创建并装依赖；
+  已装过则跳过（用 `import rembg, onnxruntime` 探测）
+- 手动重建：
+  ```bash
+  cd /root/qq-cat-bot
+  python3 -m venv tools/.venv
+  tools/.venv/bin/python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r tools/cardforge/requirements.txt
+  ```
+- **抠图模型约 2GB 不在仓库里**，rembg 首次抠图时自动下载到 `tools/cardforge/models/`
+
+### 9. ★★ 抠图内存红线（务必先看这一节）
+
+> **事故记录（2026-09-21）**：在一台 **1.6GB 内存**的 ECS 上跑 cardforge 的默认抠图模型
+> BiRefNet-lite（权重 130MB），**整机被拖入 OOM 僵死** —— TCP 端口全部能连上，
+> 但 SSH/HTTP 一律零响应。
+>
+> ★ **这种僵死不会自行恢复。** 干等没用（实测等了数分钟毫无好转），
+> 最终是**登录阿里云控制台强制重启整台服务器**才恢复的。
+> 所以代价不是「慢一下」，而是「服务彻底中断 + 必须人工救场」，
+> 严重程度远超预期 —— 这也是为什么本例宁可降级/改走 API，也绝不硬跑。
+>
+> 教训：**ONNX 抠图模型的内存需求 ≠ 权重体积**。载入权重后还要分配若干倍中间张量，
+> 输入图越大倍数越高。1.6GB 的机器连 130MB 的「lite」都扛不住。
+
+**部署前先量内存：**
+
+```bash
+awk '/MemAvailable/{printf "可用内存 %.0f MB\n", $2/1024}' /proc/meminfo
+```
+
+| 可用内存 | 结论 |
+|---|---|
+| **≥ 2.5GB** | 本地抠图（BiRefNet-lite）可用 |
+| **1.2 ~ 2.5GB** | 勉强可用，须避开超大图；建议改用抠图 API |
+| **< 1.2GB** | **别用本地抠图**。用抠图 API，或强制 `"model": "none"`（不抠图，整图当素材） |
+
+**两条防线：**
+
+1. **运行时自动降级**（`tools/cardforge/engine.py` 的 `_mem_guard`）
+   加载模型前读 `/proc/meminfo` 的 `MemAvailable`，不够就沿
+   `birefnet-general-lite → silueta → u2netp → none` 依次降级，
+   并在日志里打印实际选用结果。内存极低时自动走「不抠图」直通，**不会硬跑把机器打死**。
+2. **部署期提醒**（`deploy/install.sh` 第 6 步(附)）
+   装依赖前打印内存结论，提前让人决定是否配置抠图 API。
+
+**在 `tools/cardforge/settings.json` 配置抠图 API（推荐给小内存机器）：**
+
+```json
+{
+  "matting_api": {
+    "access_key_id": "<阿里云 AK>",
+    "access_key_secret": "<阿里云 SK>"
+  }
+}
+```
+
+配好后 `engine_name` 传 `api` 即走阿里云分割抠图，本地零模型、零内存压力。
+
 ## 五、隧道（cloudflared）
 
 配置文件 `/root/qq-cat-bot/tunnel/config.yml`（**不在仓库里**，需手工维护）：
@@ -110,9 +207,13 @@ systemctl restart qqbot
 
 | 路径 | 内容 | 来源 |
 |---|---|---|
+| `bot/assets/fonts/` | **内置字体包**（中文 TTC + 彩色 emoji） | **在仓库里**（`git pull` 即到） |
 | `resources/image_lib/dragon/` | 龙图 189 张 | 本机打包上传（不在仓库） |
 | `bot/meme/custom_memes/feiyu/` | 自研 meme 插件 | 同上（仓库里已带） |
+| `bot/meme/custom_memes/_sources/` | meme 扩展模板（465 个） | `install.sh` 从 qq-cat-memes 克隆 |
 | `tools/{BBDown,ffmpeg,cloudflared}` | 外部二进制 | install.sh 下载 / 复制自 `/usr/local/bin` |
+| `tools/cardforge/` | 卡牌制作工具（含素材） | `install.sh` 从 cardforge 仓库克隆 |
+| `tools/.venv/` | **项目级共享 venv** | `install.sh` 创建（不在仓库） |
 | `data/` | **用户数据**（钱包/卡牌/钓鱼/运势/卡牌素材） | 本机打包上传（**不在仓库**，见第八节） |
 
 ## 八、★ 用户数据 `data/` 迁移
