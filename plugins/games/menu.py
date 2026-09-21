@@ -11,20 +11,8 @@ async def cmd_game_menu(ctx):
         "· 随机星趴\n"
         "· 21点\n"
         "· 海龟汤\n"
-        "· 博彩游戏\n"
         "· 钓鱼系统\n"
         "· 卡牌制作"
-    )
-
-
-@register(keywords=["博彩游戏"], help="🎲 博彩游戏详细命令", role=ROLE_ALL, exact=True)
-async def cmd_game_menu_gamble(ctx):
-    await ctx.reply_text(
-        "🎲 博彩游戏（小赌怡情）：\n"
-        "· 骰宝 <类型> <金额> — 大/小/单/双/豹子/点数(4-17)，即时结算\n"
-        "· 命运之轮 <金额> — 10 层挑战，成功率逐层递减，可继续挑战\n"
-        "· 擦弹 <金额> / 擦弹 allin / 擦弹 halfin — 随机倍率\n\n"
-        "发送「游戏娱乐」回到列表喵"
     )
 
 
