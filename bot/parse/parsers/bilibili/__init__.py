@@ -58,7 +58,10 @@ class BilibiliParser(BaseParser):
         url = f"https://{searched.group(0)}"
         return await self.parse_with_redirect(url)
 
-    @handle("BV", r"^(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s)?(?P<page_num>\d{1,3})?$")
+    # 注意：这里刻意不加 ^...$ 锚点。用户在群里发消息时几乎总会带前缀
+    # （「看看这个 BVxxx」「帮我解析 BVxxx 2」），带锚点会导致整条不匹配；
+    # gateway 的 match() 用的是 pat.search()，去锚点后可从任意位置抠出 BV 号。
+    @handle("BV", r"(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s?(?P<page_num>\d{1,3}))?")
     @handle(
         "/BV",
         r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9a-zA-Z]{10})(?:\?p=(?P<page_num>\d{1,3}))?",
@@ -70,7 +73,7 @@ class BilibiliParser(BaseParser):
 
         return await self.parse_video(bvid=bvid, page_num=page_num)
 
-    @handle("bm", r"^bm(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s(?P<page_num>\d{1,3}))?$")
+    @handle("bm", r"bm(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s(?P<page_num>\d{1,3}))?")
     async def _parse_bv_bm(self, searched: Match[str]):
         bvid = searched.group("bvid")
         page = int(searched.group("page_num") or 1)
@@ -84,7 +87,7 @@ class BilibiliParser(BaseParser):
             url=a_url,
         )
 
-    @handle("av", r"^av(?P<avid>\d{6,})(?:\s)?(?P<page_num>\d{1,3})?$")
+    @handle("av", r"av(?P<avid>\d{6,})(?:\s?(?P<page_num>\d{1,3}))?")
     @handle(
         "/av",
         r"bilibili\.com(?:/video)?/av(?P<avid>\d{6,})(?:\?p=(?P<page_num>\d{1,3}))?",
@@ -146,7 +149,15 @@ class BilibiliParser(BaseParser):
 
         video = await self._get_video(bvid=bvid, avid=avid)
         # 转换为 msgspec struct
-        video_info = convert(await video.get_info(), VideoInfo)
+        try:
+            video_info = convert(await video.get_info(), VideoInfo)
+        except Exception as e:
+            # B站对机房/境外 IP 的匿名请求会直接返回风控页（412），
+            # bilibili_api 会把它抛成 ResponseCodeException / 一般异常。
+            # 这里转成可读提示，避免用户以为是自己发的 BV 号有问题。
+            if "412" in str(e) or "风控" in str(e) or "security control" in str(e):
+                raise ParseException("B站风控拦截(412)：请先扫码登录B站账号后再解析") from e
+            raise
         # 获取简介
         text = f"简介: {video_info.desc}" if video_info.desc else None
         # up

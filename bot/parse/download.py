@@ -52,6 +52,46 @@ def auto_task(func: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Task[T]]
     return wrapper
 
 
+# Content-Type → 扩展名。QQ 富媒体上传靠扩展名判格式，无后缀的音频会被判「格式不支持」。
+_CTYPE_EXT = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mp4": ".m4a",
+    "audio/aac": ".aac",
+    "audio/ogg": ".ogg",
+    "video/mp4": ".mp4",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _sniff_ext(head: bytes) -> str | None:
+    """从文件头字节猜扩展名（Content-Type 缺失/不可信时兜底）。"""
+    if head[:3] == b"ID3" or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3"
+    if head[:4] == b"fLaC":
+        return ".flac"
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return ".wav"
+    if head[4:8] == b"ftyp":
+        return ".m4a"
+    if head[:2] == b"\xff\xf1" or head[:2] == b"\xff\xf9":
+        return ".aac"
+    if head[:4] == b"OggS":
+        return ".ogg"
+    if head[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    return None
+
+
 class VideoInfo(Struct):
     title: str
     """标题"""
@@ -92,6 +132,37 @@ class Downloader:
     async def close(self):
         """关闭网络客户端"""
         await self.client.close()
+
+    @staticmethod
+    async def _ensure_media_suffix(
+        file_path: Path, response, head_bytes: bytes | None = None
+    ) -> Path:
+        """下载落盘后，若文件没有可用扩展名则按 Content-Type / 文件头补一个。
+
+        背景：网易云音频直链形如 `http://m804.music.126.net/<时间戳>/<hash>/xxx`，
+        URL path 没有 `.mp3`，`generate_file_name` 只能生成 `d41d8cd98f00b204`（无后缀）。
+        QQ 富媒体上传按扩展名判格式，无后缀的音频会被服务端拒绝。
+        只处理「没有后缀」的情况；已有后缀的原样返回，不产生多余 IO。
+        """
+        if file_path.suffix:
+            return file_path
+        try:
+            ctype = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            # Content-Type 常见 text/plain / application/octet-stream，不可信 → 优先嗅探文件头
+            ext = _sniff_ext(head_bytes or b"")
+            if not ext:
+                ext = _CTYPE_EXT.get(ctype)
+            if not ext:
+                return file_path
+            new_path = file_path.with_suffix(ext)
+            if new_path.exists():
+                await safe_unlink(new_path)
+            file_path.rename(new_path)
+            logger.info(f"媒体无后缀，按文件头/Content-Type 补正为 {new_path.name}")
+            return new_path
+        except Exception as e:  # 补后缀失败不影响主流程
+            logger.warning(f"补正媒体后缀失败（保持原样）: {e}")
+            return file_path
 
     @auto_task
     async def streamd(
@@ -150,7 +221,21 @@ class Downloader:
                             f"HTTP payload incomplete {downloaded}/{content_length}"
                         )
 
-                return file_path
+                    # ★ 内容校验：下载到的可能是错误页而不是媒体。
+                    #   实测网易云 outer 兜底链对无版权/需 VIP 的曲子会回 200 +
+                    #   一个 100KB 左右的 HTML（`<!DOCTYPE html>`），若直接当歌曲发出去，
+                    #   群里收到的是一个「打不开的音频」。这里按文件头识别并拒掉。
+                    with open(file_path, "rb") as f:
+                        head_bytes = f.read(512)
+                    low_head = head_bytes[:512].lstrip().lower()
+                    if (low_head.startswith(b"<!doctype") or low_head.startswith(b"<html")
+                            or low_head.startswith(b"{\"") or low_head.startswith(b"<?xml")):
+                        logger.warning(f"媒体 url: {url} 下载到的是网页/JSON 而非媒体，丢弃")
+                        raise ZeroSizeException
+
+                    # 无后缀则按 Content-Type / 文件头补正（QQ 上传要按扩展名判格式）
+                    file_path = await self._ensure_media_suffix(file_path, response, head_bytes)
+                    return file_path
             except (ZeroSizeException, SizeLimitException):
                 await safe_unlink(file_path)
                 raise

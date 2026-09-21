@@ -197,6 +197,45 @@ class PluginConfig(ConfigNode):
         # Parser
         self.parser = ParserConfig(self.parsers_template or [])
 
+        # ★ 借用 settings.json 里的网易云 cookie 给解析链路。
+        #   背景：点歌插件读 settings.json 的 NETEASE_COOKIE，而解析插件读本文件的
+        #   ncm.cookies —— 两条链路各读各的，用户在 settings.json 配了 cookie 后
+        #   解析链路依然裸奔，导致「非 VIP 歌也拿不到播放地址」。
+        #   这里做一次性回填：ncm.cookies 为空且 settings.json 有值时才补，并落盘。
+        self._inherit_netease_cookie()
+
+    def _inherit_netease_cookie(self) -> None:
+        """把 settings.json 的 NETEASE_COOKIE 回填给 ncm.cookies（幂等）。
+
+        只在「解析侧为空、settings.json 有值」时写入，避免覆盖用户在面板里
+        单独为解析链路配置的 cookie。
+        """
+        try:
+            ncm = self.parser.ncm  # 缺失会抛 AttributeError，被外层兜住
+        except Exception:
+            return
+        if (ncm.cookies or "").strip():
+            return  # 解析侧已配，尊重它
+        try:
+            import sys
+            from pathlib import Path
+            project_root = Path(__file__).resolve().parents[2]
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            from config import _cfg  # 项目根配置（settings.json）
+            cookie = str(_cfg("NETEASE_COOKIE", "") or "").strip()
+        except Exception as e:
+            logger.debug(f"[parse] 读取 settings.json 的 NETEASE_COOKIE 失败: {e}")
+            return
+        if not cookie:
+            return
+        self.parser.ncm._data["cookies"] = cookie
+        self.save_config()
+        logger.info(
+            "[parse] 已把 settings.json 的 NETEASE_COOKIE 回填给 ncm.cookies"
+            f"（{len(cookie)} 字符），解析链路将带登录态请求"
+        )
+
     def save_config(self) -> None:
         try:
             self._config_file.parent.mkdir(parents=True, exist_ok=True)

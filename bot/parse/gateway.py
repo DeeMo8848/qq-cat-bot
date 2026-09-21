@@ -124,14 +124,55 @@ class ParseEngine:
         try:
             result = await parser.parse(kw, searched)
         except Exception as e:
-            logger.warning(f"[parse] 解析失败 {kw}: {e}")
-            return False
+            logger.warning(f"[parse] 解析失败 {kw}: {type(e).__name__}: {e}")
+            # 以前这里静默 return False，用户侧表现为「发了链接什么反应都没有」，
+            # 完全看不出是解析失败还是没识别到。现在把原因回给触发者。
+            try:
+                await self._notify_parse_fail(ctx, sender, e)
+            except Exception:
+                pass
+            return True
         try:
             await self.sender.send_parse_result(ctx, sender, result)
         except Exception as e:
             logger.warning(f"[parse] 发送失败 {kw}: {e}")
             return False
         return True
+
+    async def _notify_parse_fail(self, ctx, sender, err):
+        """解析失败时回一条可读提示。
+
+        ★ 教训：这里原本所有分支都 `tip = None`，等于「解析失败永远静默」——
+        用户侧表现就是「发了链接什么反应都没有」，完全没法排查。
+        现在除「重复噪音」类以外都要给出可读原因。
+        """
+        msg = str(err)
+        low = msg.lower()
+        if "412" in msg or "风控" in msg or "security control" in low:
+            tip = ("B站风控拦下了这次解析（412）喵。\n"
+                   "请让管理员发送「登录b站」扫码登录一次，登录态会同时同步给"
+                   "BBDown 与多平台解析两条链路。")
+        elif "没有可用的播放地址" in msg or "no play url" in low:
+            tip = "这首歌在网易云拿不到播放地址喵（通常是 VIP / 无版权曲目）…换一首试试？"
+        elif "时长" in msg or "duration" in low:
+            tip = "这个内容太长了喵，超过可发送的时长上限。"
+        elif "大小" in msg or "size" in low:
+            tip = "这个内容太大了喵，超过可发送的大小上限。"
+        elif "下载失败" in msg or "download" in low:
+            tip = "内容下载失败了喵，稍后再试试？"
+        elif "风控" in msg or "登录" in msg:
+            tip = f"解析失败了喵：{msg[:120]}"
+        elif isinstance(err, Exception) and "ParseException" in type(err).__name__:
+            # ParseException 的文案通常已经是给人看的（如「[NCM] 《xxx》没有可用…」）
+            tip = f"解析不出来了喵：{msg[:120]}"
+        else:
+            tip = f"解析出错了喵（{type(err).__name__}），稍后再试试？"
+        if not tip:
+            return
+        try:
+            await sender.send_text(ctx.message, tip, reply=True)
+        except Exception:
+            pass
 
     async def close(self):
         if self.downloader:
