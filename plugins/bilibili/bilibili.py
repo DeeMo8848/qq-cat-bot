@@ -49,6 +49,16 @@ TUTORIAL = """【B站解析】使用教程
 LOGIN_HINT = """检测到 BBDown 还没有登录 B站喵，解析画质会受到限制。
 发送「登录b站」扫码登录（推荐），或「登录b站tv」登录TV账号喵。"""
 
+# B站 412 风控：未登录 + 机房/境外 IP 时几乎必现。
+# 实测（阿里云香港节点、BBDown 1.6.3）：匿名请求会在「获取视频信息」阶段被直接拒绝，
+# 报 net_http_message_not_success_statuscode_reason, 412, Precondition Failed。
+# 这是 B站 的服务端风控，不是命令写错；扫码登录后带 SESSDATA 请求即可绕过。
+RISK_HINT = """解析被B站风控拦下了喵（412）。这通常是因为 BBDown 还没登录 B站账号，
+而且服务器 IP 属于机房段，匿名请求会被直接拒绝。
+
+请发送「登录b站」扫码登录一次，登录态会同时同步给 BBDown 与多平台解析两条链路，
+之后解析就正常了喵。"""
+
 
 def extract_bv(text):
     m = BV_RE.search(text or "")
@@ -233,11 +243,18 @@ async def _get_info(bv):
         info["size_mb"] = total
     # 未登录也会打印标题（只是画质受限），单独识别出来供上层提示
     info["not_login"] = bbdown_login.MARK_NOT_LOGIN in text
+    # B站风控（412）：单独标记，让上层给出可操作的指引而不是含糊的「解析失败」
+    if "412" in text and ("Precondition Failed" in text or "风控" in text
+                          or "security control" in text):
+        info["risk_412"] = True
+    else:
+        info["risk_412"] = False
     if not info.get("title"):
         # 解析失败时打印原始输出，便于定位（BBDown 网络报错 / 编码问题等）
         print(f"[bili] 解析失败 bv={bv} rc={code} out={out[:300]!r} err={err[:300]!r}", flush=True)
         _log.warning("BBDown 解析失败: bv=%s rc=%s err=%r", bv, code, err[:300])
-        return None
+        # 拿不到标题但仍要保留风控标记，供上层区分「BV号写错」与「被风控」
+        return info if info.get("risk_412") else None
     if info["not_login"]:
         _log.info("BBDown 未登录，解析画质受限: bv=%s", bv)
     return info
@@ -296,6 +313,11 @@ async def _auto_parse(ctx, bv):
     info = await _get_info(bv)
     if not info:
         await ctx.reply("解析失败，请检查 BV 号是否正确")
+        return
+
+    # B站风控（412）：给出可操作的指引，而不是让用户以为 BV 号写错了
+    if info.get("risk_412") and not info.get("title"):
+        await ctx.reply(RISK_HINT)
         return
 
     # 未登录时解析会受限（画质被压到 480P）：提示一次并给出扫码登录入口

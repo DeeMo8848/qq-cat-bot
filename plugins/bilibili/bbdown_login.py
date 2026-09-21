@@ -285,7 +285,77 @@ def _harvest(kind, workdir):
             saved = saved or dst
         except Exception as e:
             _log.warning("保存 %s 登录态到 %s 失败: %s", kind, dst, e)
+
+    # 关键增强：同一次扫码同时喂给「多平台解析」。
+    # bot 里 B站解析有两条独立链路（BBDown 与 bot/parse 多平台解析），各读各的登录态：
+    #   BBDown        -> BBDown.data / BBDownTV.data
+    #   多平台解析     -> tmp/parse/cookies/bilibili_credential.json
+    # 以前只有 BBDown 那套能扫码，多平台解析永远没有 cookie，
+    # 表现为「BBDown 被被动模式跳过、多平台解析又因未登录被 412」= 两头都不工作。
+    if kind == "web":
+        _mirror_to_parser_cookies(blob)
+
     return saved
+
+
+def _mirror_to_parser_cookies(blob: bytes):
+    """把 BBDown 的 WEB 登录态转换成多平台解析读的 bilibili_credential.json。
+
+    只在能抠出 SESSDATA 时才写（多平台解析用 Credential.from_cookies，
+    缺 SESSDATA 会直接判为无效）。失败只记日志，不影响 BBDown 侧登录成功。
+    """
+    try:
+        from config import ROOT
+    except Exception:
+        return
+    try:
+        text = blob.decode("utf-8", errors="replace")
+        cookies = {}
+        for part in re.split(r"[;\n]", text):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k and v and k not in cookies:
+                cookies[k] = v
+        # BBDown.data 是 JSON 时的兜底解析
+        if not cookies or "SESSDATA" not in cookies:
+            try:
+                import json
+                d = json.loads(text)
+                if isinstance(d, dict):
+                    for k, v in d.items():
+                        if isinstance(v, str):
+                            cookies.setdefault(k, v)
+            except Exception:
+                pass
+        # 统一键名大小写（BBDown 写的是小写，bilibili_api 期望大写）
+        norm = {}
+        for k, v in cookies.items():
+            kl = k.lower()
+            if kl == "sessdata":
+                norm["SESSDATA"] = v
+            elif kl == "bili_jct":
+                norm["bili_jct"] = v
+            elif kl == "dedeuserid":
+                norm["DedeUserID"] = v
+            elif kl == "ac_time_value":
+                norm["ac_time_value"] = v
+            else:
+                norm[k] = v
+        if not norm.get("SESSDATA"):
+            _log.warning("未能从 BBDown 登录态中解析出 SESSDATA，跳过多平台解析登录态同步")
+            return
+        dst = os.path.join(ROOT, "tmp", "parse", "cookies", "bilibili_credential.json")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        import json as _json
+        with open(dst, "w", encoding="utf-8") as f:
+            _json.dump(norm, f, ensure_ascii=False)
+        _log.info("已同步 B站登录态到多平台解析: %s", dst)
+        print("[bili] 已同步 B站登录态到多平台解析: %s" % dst, flush=True)
+    except Exception as e:
+        _log.warning("同步多平台解析登录态失败: %s", e)
 
 
 def _cleanup_workdir(workdir):
