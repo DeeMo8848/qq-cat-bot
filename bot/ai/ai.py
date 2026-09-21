@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""AI 对话模块：接入任意 OpenAI 兼容 API（DeepSeek / 硅基流动 / OpenAI … 只需一个 API Key）。
+"""AI 对话模块：接入多家大模型服务商（DeepSeek / 硅基流动 / OpenAI / Gemini /
+Anthropic / 智谱 / Kimi / Groq / Mistral / Together / xAI / OpenRouter / 通义千问 …）。
 
 设计要点：
+- 服务商差异（认证方式、路径、请求体/响应体格式）全部收敛在 bot/ai/providers.py，
+  本模块只负责「对话逻辑 + 配置 + 记忆」。
 - 按 openid 隔离会话上下文（群 member_openid / 私聊 user_openid），各聊各的、互不串台。
 - 记忆：cache/ai_memory.json 保存 AI 对每个用户的 {memory, summary}，
   由 AI 自己根据对话总结、程序只负责保存。新会话把记忆+总结注入 system prompt，
@@ -16,6 +19,8 @@ import logging
 import os
 
 from config import ROOT
+
+from . import providers as _prov
 
 _log = logging.getLogger("ai")
 
@@ -36,18 +41,13 @@ _DEFAULTS = {
     "provider": "deepseek",
     "api_key": "",
     "base_url": "https://api.deepseek.com",
-    "model": "deepseek-flash",
+    "model": "deepseek-chat",
     "system_preset": _DEFAULT_PRESET,
     "max_history": 12,          # 保留多少轮上下文
     "memory_interval": 0,       # 记忆总结间隔（轮）；0 = 关闭自动总结
     "temperature": 0.85,
-}
-
-_PROVIDER_BASE = {
-    "deepseek": "https://api.deepseek.com",
-    "siliconflow": "https://api.siliconflow.cn/v1",
-    "openai": "https://api.openai.com/v1",
-    "other": "",
+    "max_tokens": 0,            # 0 = 不指定（用服务商默认）。Anthropic 必填，内部有兜底
+    "timeout": 90,              # 单次请求超时（秒）
 }
 
 # 每个用户在内存里的会话历史（openid -> [{"role","content"}, ...]）
@@ -85,12 +85,39 @@ async def get_config():
 
 
 async def save_config(data):
+    """保存配置。切换服务商时自动带出该服务商的默认 base_url / model。
+
+    规则（按优先级）：
+      1. 用户**显式**改了 base_url / model → 用用户的值
+      2. 否则若 provider 变了 → 用新服务商的 default_base / default_model
+      3. 否则保留原值
+    这样一个「切到 Gemini」的操作不会因为残留 deepseek 的地址而请求失败。
+    """
     async with _lock:
         cfg = dict(_DEFAULTS)
-        cfg.update({k: v for k, v in _read_json(_CONFIG_FP, {}).items() if k in _DEFAULTS})
+        cur = _read_json(_CONFIG_FP, {})
+        cfg.update({k: v for k, v in cur.items() if k in _DEFAULTS})
+        old_provider = str(cfg.get("provider") or "")
+
+        new_provider = str((data or {}).get("provider") or old_provider).strip().lower()
+        provider_changed = bool(new_provider) and new_provider != old_provider
+
+        payload = dict(data or {})
+        # 判断用户是否显式改了这两个字段（空串视为「没改」，方便前端留空表示用默认）
+        touched_base = bool(str(payload.get("base_url") or "").strip())
+        touched_model = bool(str(payload.get("model") or "").strip())
+
         for k in _DEFAULTS:
-            if k in data and data[k] not in (None, ""):
-                cfg[k] = data[k]
+            if k in payload and payload[k] not in (None, ""):
+                cfg[k] = payload[k]
+
+        cfg["provider"] = new_provider or old_provider or _DEFAULTS["provider"]
+        meta = _prov.get(cfg["provider"])
+        if provider_changed and not touched_base:
+            cfg["base_url"] = meta.get("default_base", "")
+        if provider_changed and not touched_model:
+            cfg["model"] = meta.get("default_model", "")
+
         _write_json(_CONFIG_FP, cfg)
         return cfg
 
@@ -135,32 +162,54 @@ async def delete_memory(openid):
         return True
 
 
-# ---------- OpenAI 兼容调用 ----------
-async def _call(cfg, messages, timeout=90):
+# ---------- 多服务商调用 ----------
+async def _call(cfg, messages, timeout=None):
+    """按当前服务商配置发起一次对话请求，返回回复文本。
+
+    服务商差异（认证头 / 路径 / 请求体 / 响应体）由 providers 模块处理，
+    这里只负责发请求与错误整形。
+    """
     import aiohttp
 
-    url = str(cfg["base_url"]).rstrip("/") + "/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + cfg["api_key"],
-    }
-    payload = {
-        "model": cfg["model"],
-        "messages": messages,
-        "temperature": float(cfg.get("temperature", 0.85)),
-        "thinking": {"type": "disabled"},
-        "stream": False,
-    }
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+    provider = str(cfg.get("provider") or "other").lower()
+    base = str(cfg.get("base_url") or "").strip() or _prov.get(provider).get("default_base", "")
+    if not base:
+        raise RuntimeError("未配置 base_url（服务商 %s）" % provider)
+    model = str(cfg.get("model") or "").strip() or _prov.get(provider).get("default_model", "")
+    if not model:
+        raise RuntimeError("未配置模型名（服务商 %s）" % provider)
+
+    url = _prov.chat_url(provider, base, cfg.get("api_key") or "", model)
+    headers = _prov.build_headers(provider, cfg.get("api_key") or "")
+    payload = _prov.build_chat_body(
+        provider, model, messages,
+        temperature=float(cfg.get("temperature", 0.85) or 0.85),
+        max_tokens=int(cfg.get("max_tokens") or 0),
+    )
+
+    total = int(timeout or cfg.get("timeout") or 90)
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=total)
+    ) as s:
         async with s.post(url, json=payload, headers=headers) as r:
+            body = await r.text()
             if r.status not in (200, 201):
-                body = await r.text()
-                raise RuntimeError(f"AI 请求失败 HTTP {r.status}: {body[:200]}")
-            data = await r.json()
+                raise RuntimeError(
+                    "AI 请求失败 HTTP %s: %s" % (r.status, _short(body))
+                )
     try:
-        return data["choices"][0]["message"]["content"].strip()
+        data = json.loads(body)
     except Exception:
-        raise RuntimeError("AI 响应格式异常")
+        raise RuntimeError("AI 返回的不是 JSON：%s" % _short(body))
+    try:
+        return _prov.parse_text_response(provider, data)
+    except ValueError as e:
+        raise RuntimeError("AI 响应解析失败：%s | %s" % (e, _short(body)))
+
+
+def _short(text, n=300):
+    """错误信息里附带一小段响应体，方便定位（去掉换行避免刷屏）。"""
+    return " ".join(str(text or "").split())[:n]
 
 
 async def test_ping(msg="你好，在吗喵"):
@@ -172,55 +221,64 @@ async def test_ping(msg="你好，在吗喵"):
     return await _call(cfg, msgs, timeout=30)
 
 
+def list_providers():
+    """供 WebUI 渲染服务商下拉与默认值。"""
+    return _prov.list_for_ui()
+
+
 async def fetch_models():
+    """拉取当前服务商的模型列表，返回 [{id, name}]。
+
+    Gemini / Anthropic 的响应结构与 OpenAI 不同，统一交给 providers.parse_models。
+    """
     import aiohttp
 
     cfg = await get_config()
-    if not cfg["base_url"]:
+    provider = str(cfg.get("provider") or "other").lower()
+    p = _prov.get(provider)
+    if not p.get("has_models"):
         return []
-    url = str(cfg["base_url"]).rstrip("/") + "/models"
-    headers = {"Authorization": "Bearer " + cfg["api_key"]}
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+    base = str(cfg.get("base_url") or "").strip() or p.get("default_base", "")
+    if not base:
+        return []
+    url = _prov.models_url(provider, base, cfg.get("api_key") or "")
+    headers = _prov.build_headers(provider, cfg.get("api_key") or "")
+    headers.pop("Content-Type", None)  # GET 不需要
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
         async with s.get(url, headers=headers) as r:
+            body = await r.text()
             if r.status != 200:
-                raise RuntimeError(f"获取模型列表失败 HTTP {r.status}")
-            data = await r.json()
-    return [m.get("id") for m in data.get("data", []) if m.get("id")]
+                raise RuntimeError("获取模型列表失败 HTTP %s: %s" % (r.status, _short(body)))
+    try:
+        data = json.loads(body)
+    except Exception:
+        raise RuntimeError("模型列表不是 JSON：%s" % _short(body))
+    return _prov.parse_models(provider, data)
 
 
 async def fetch_balance():
-    '''尽力而为的余额查询；不同服务商端点不同，查不到返回 None。'''
+    """尽力而为的余额查询；不同服务商端点不同，查不到返回 None。"""
     import aiohttp
 
     cfg = await get_config()
-    if not cfg["base_url"]:
+    provider = str(cfg.get("provider") or "other").lower()
+    p = _prov.get(provider)
+    path = p.get("balance_path")
+    if not path:
         return None
-    provider = str(cfg.get("provider", "")).lower()
-    base = str(cfg["base_url"]).rstrip("/")
-    headers = {"Authorization": "Bearer " + cfg["api_key"]}
+    base = str(cfg.get("base_url") or "").strip() or p.get("default_base", "")
+    if not base:
+        return None
+    url = _prov.build_url(provider, base, path, cfg.get("api_key") or "")
+    headers = _prov.build_headers(provider, cfg.get("api_key") or "")
+    headers.pop("Content-Type", None)
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as s:
-            if provider == "deepseek":
-                async with s.get(base + "/user/balance", headers=headers) as r:
-                    if r.status != 200:
-                        return None
-                    infos = (await r.json()).get("balance_infos") or []
-                    if not infos:
-                        return None
-                    return {"provider": "DeepSeek", "total": infos[0].get("total_balance"), "currency": infos[0].get("currency", "CNY")}
-            if provider == "siliconflow":
-                async with s.get(base + "/user/info", headers=headers) as r:
-                    if r.status != 200:
-                        return None
-                    bal = (await r.json()).get("data", {}).get("balance")
-                    if bal is None:
-                        return None
-                    return {"provider": "硅基流动", "total": bal, "currency": "CNY"}
-            # OpenAI / 兼容：订阅端点（很可能无权限，查不到即不支持）
-            async with s.get(base + "/dashboard/billing/subscription", headers=headers) as r:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get(url, headers=headers) as r:
                 if r.status != 200:
                     return None
-                return {"provider": "OpenAI", "total": (await r.json()).get("hard_limit_usd"), "currency": "USD"}
+                data = await r.json(content_type=None)
+        return _prov.parse_balance(provider, data)
     except Exception:
         return None
 
