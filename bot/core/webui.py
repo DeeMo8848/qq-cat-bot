@@ -34,13 +34,16 @@ _LOG_FILE = os.path.join(ROOT, "botpy.log")
 
 
 def _module_groups():
-    """返回 Web 后台「游戏 / 其他」两层功能树及其命令集合。
+    """返回 Web 后台「游戏娱乐 / 随机图片 / 其他功能 / 测试功能」功能树及其命令集合。
 
-    - GAME_GROUPS: [(key, 名, [命令名])]，游戏娱乐下每个插件整体一个开关
-    - GAME_CMD_NAMES: 全部游戏命令（用于隐藏与一键开关）
+    - GAME_GROUPS: [(key, 名, [命令名])]，游戏娱乐下每个功能整体一个开关
+    - GAME_CMD_NAMES: 全部游戏功能命令（用于隐藏与一键开关）
     - OTHER_PLUGINS: [(key, 名, [命令名], sub)]，其他功能下每个插件整体一个开关；
       sub 供插件内还有独立功能的嵌套开关（仅搜图），格式同 GAME_GROUPS
     - OTHER_CMD_NAMES: 全部其他功能命令（用于隐藏与一键开关）
+    - TEST_PLUGINS: [(key, 名, [命令名])]，测试功能下每个插件一个总开关
+    - TEST_CMD_NAMES: 全部测试功能命令（用于隐藏与一键开关）
+    - MENU_HIDDEN: 仅从后台隐藏、不出独立开关的命令（子菜单入口 + 已并入其他模块的分项）
     """
     from plugins.games import GAME_CMD_NAMES, GAME_GROUPS
     from plugins.fishing import FISHING_CMD_NAMES   # 钓鱼并入「游戏娱乐」
@@ -65,14 +68,53 @@ def _module_groups():
         ("netease_music", "网易云点歌", NCM_CMD_NAMES, []),
         ("jrys", "今日运势签到", JRESY_CMD_NAMES, []),
         ("random_words", "随机一言/名言/诗词", WORD_CMD_NAMES, []),
+        # 「下载图片 / 下载表情」归入「其他功能」
+        ("download_image", "下载图片/表情", ["cmd_download_image"], []),
     ]
     other_names = {n for _, _, ns, _ in other_plugins for n in ns}
     # 「其他功能」子菜单入口命令（cmd_other_menu）并入该模块，避免与模块卡片重复显示
     other_names = other_names | {"cmd_other_menu"}
-    # 钓鱼插件归入「游戏娱乐」模块（在 web 层合并，避免 import 环）
-    game_groups = list(GAME_GROUPS) + [("fishing", "钓鱼", sorted(FISHING_CMD_NAMES))]
-    game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES
-    return game_groups, game_names, other_plugins, other_names, CARD_CMD_NAMES
+
+    # 游戏娱乐：吉星派对 / 21点 / 海龟汤 / 钓鱼（含买&升级钓鱼机）/ 卡牌制作
+    # 注：卡牌制作并入游戏娱乐后，「游戏娱乐」总开关会一并控制卡牌命令
+    game_groups = list(GAME_GROUPS) + [
+        ("fishing", "钓鱼系统", sorted(FISHING_CMD_NAMES | {"cmd_buy_machine", "cmd_upgrade_machine"})),
+        ("cards", "卡牌制作", sorted(CARD_CMD_NAMES)),
+    ]
+    game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES | set(CARD_CMD_NAMES) \
+        | {"cmd_buy_machine", "cmd_upgrade_machine"}
+
+    # 测试功能：打招呼 / 自更新 / 运维（状态&重启）/ 版本查询 / 网页测试
+    test_plugins = [
+        ("test_hello", "打招呼", ["cmd_hello"]),
+        ("test_update", "bot 更新", ["cmd_bot_update"]),
+        ("test_ops_status", "bot 状态", ["cmd_bot_status"]),
+        ("test_ops_restart", "重启 bot", ["cmd_bot_restart"]),
+        ("test_version", "版本查询", ["cmd_bot_version"]),
+        ("test_webtest", "网页测试", ["cmd_webtest"]),
+    ]
+    test_names = {n for _, _, ns in test_plugins for n in ns}
+
+    # 仅隐藏、不出开关的命令：
+    #   1) 各模块的「子菜单入口」命令（游戏/随机图/其他功能的清单），
+    #      它们与对应的模块卡片重复，不需要单独一个开关；
+    #   2) 已并入其他模块的分项（登录b站 → 属 B站解析，跟随 cmd_bilibili 开关）；
+    #   3) 游戏娱乐下的各功能清单命令（随机星趴/21点/海龟汤/钓鱼系统/卡牌制作），
+    #      已作为游戏娱乐的二级开关展示，不再单列顶层卡片。
+    menu_hidden = {
+        "cmd_game_menu",        # 游戏娱乐清单（并入 cmd_game）
+        "cmd_random_menu",      # 随机图片清单（并入 cmd_randomimg）
+        "cmd_other_menu",       # 其他功能清单（并入 cmd_other）
+        "cmd_bili_login",       # 登录b站 / B站登录 → 属 B站解析
+        "cmd_game_menu_star",   # 随机星趴清单
+        "cmd_game_menu_blackjack",  # 21点清单
+        "cmd_game_menu_turtle",     # 海龟汤清单
+        "cmd_game_menu_fishing",    # 钓鱼系统清单
+        "cmd_game_menu_card",       # 卡牌制作清单
+    }
+
+    return (game_groups, game_names, other_plugins, other_names,
+            test_plugins, test_names, menu_hidden)
 
 
 def _plugin_switch(key, title, names, sub):
@@ -112,6 +154,7 @@ class WebUI:
         self.app.router.add_post("/api/shutdown", self.shutdown)
         # AI 对话配置
         self.app.router.add_get("/api/ai/config", self.ai_config)
+        self.app.router.add_get("/api/ai/providers", self.ai_providers)
         self.app.router.add_post("/api/ai/config", self.ai_save_config)
         self.app.router.add_post("/api/ai/test", self.ai_test)
         self.app.router.add_post("/api/ai/models", self.ai_models)
@@ -163,10 +206,14 @@ class WebUI:
     async def status(self, request):
         ip = await self._current_ip()
         rand_names = randomimg.RANDOMIMG_CMD_NAMES
-        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES, CARD_CMD_NAMES) = _module_groups()
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES,
+         TEST_PLUGINS, TEST_CMD_NAMES, MENU_HIDDEN) = _module_groups()
         rand_cmds = [f for f in commands._COMMANDS if f.__name__ in rand_names]
         # 属于各模块/插件的底层命令不留独立开关，统一归为插件的总开关
-        hidden = rand_names | GAME_CMD_NAMES | OTHER_CMD_NAMES | CARD_CMD_NAMES
+        # 注：卡牌（CARD_CMD_NAMES）已并入游戏娱乐；测试功能命令收进 TEST_CMD_NAMES
+        #     MENU_HIDDEN 为子菜单入口与已并入其他模块的分项（仅隐藏）
+        hidden = (rand_names | GAME_CMD_NAMES | OTHER_CMD_NAMES | TEST_CMD_NAMES
+                  | MENU_HIDDEN)
         commands_list = [
             {
                 "name": func.__name__,
@@ -207,7 +254,7 @@ class WebUI:
             "name": "cmd_game",
             "title": "游戏娱乐",
             "keywords": [],
-            "help": "游戏娱乐（吉星派对 / 21点 / 海龟汤）",
+            "help": "游戏娱乐（随机星趴 / 21点 / 海龟汤 / 钓鱼系统 / 卡牌制作）",
             "enabled": any(state.is_enabled(n) for n in GAME_CMD_NAMES),
             "group_rule": None,
             "sub": [_plugin_switch(k, t, ns, []) for k, t, ns in GAME_GROUPS],
@@ -217,20 +264,20 @@ class WebUI:
             "name": "cmd_other",
             "title": "其他功能",
             "keywords": [],
-            "help": "其他功能（搜图 / 漂流瓶 / 吃什么 / MC皮肤 / 幻影坦克 / emojimix / 网易云点歌 / 今日运势 / 随机文案）",
+            "help": "其他功能（搜图 / 漂流瓶 / 吃什么 / MC皮肤 / 幻影坦克 / emojimix / 网易云点歌 / 今日运势 / 随机文案 / 下载图片）",
             "enabled": any(state.is_enabled(n) for n in OTHER_CMD_NAMES),
             "group_rule": None,
             "sub": [_plugin_switch(k, t, ns, sub) for k, t, ns, sub in OTHER_PLUGINS],
         })
-        # 「卡牌制作」模块：总开关一键控制全部卡牌命令
+        # 「测试功能」模块：打招呼 / bot 更新 / 运维状态 / 重启 / 版本查询 / 网页测试
         commands_list.append({
-            "name": "cmd_cards",
-            "title": "卡牌制作",
+            "name": "cmd_test",
+            "title": "测试功能",
             "keywords": [],
-            "help": "卡牌 DIY（制作 / 收集册 / 我的卡牌 / 市场 / 素材包）",
-            "enabled": any(state.is_enabled(n) for n in CARD_CMD_NAMES),
+            "help": "测试功能（打招呼 / bot 更新 / bot 状态 / 重启 bot / 版本查询 / 网页测试）",
+            "enabled": any(state.is_enabled(n) for n in TEST_CMD_NAMES),
             "group_rule": None,
-            "sub": [],
+            "sub": [_plugin_switch(k, t, ns, []) for k, t, ns in TEST_PLUGINS],
         })
         robot = getattr(self.bot, "robot", None)
         tunnel_url = self.tunnel.get_url() if self.tunnel else None
@@ -254,7 +301,8 @@ class WebUI:
         data = await request.json()
         name = data.get("name", "")
         enabled = bool(data.get("enabled"))
-        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES, CARD_CMD_NAMES) = _module_groups()
+        (GAME_GROUPS, GAME_CMD_NAMES, OTHER_PLUGINS, OTHER_CMD_NAMES,
+         TEST_PLUGINS, TEST_CMD_NAMES, MENU_HIDDEN) = _module_groups()
         # 插件/功能组开关 key -> 该开关下所有命令名（含搜图插件的子开关）
         group_map = {}
         for key, _title, names, sub in OTHER_PLUGINS:
@@ -263,33 +311,36 @@ class WebUI:
                 group_map[k] = set(ns)
         for key, _title, names in GAME_GROUPS:
             group_map[key] = set(names)
+        for key, _title, names in TEST_PLUGINS:
+            group_map[key] = set(names)
         known = (
             {f.__name__ for f in commands._COMMANDS}
-            | {"parse_enabled", "cmd_randomimg", "cmd_game", "cmd_other", "cmd_cards"}
+            | {"parse_enabled", "cmd_randomimg", "cmd_game", "cmd_other", "cmd_test"}
             | set(group_map)
+            | MENU_HIDDEN
         )
         if name not in known:
             return web.json_response({"ok": False, "msg": "命令不存在"}, status=400)
         if name in group_map:
             # 插件/功能组开关（如 emojimix / 21点 / 搜番）：一键开/关该插件下所有命令
+            # 注：钓鱼组已含 cmd_buy_machine / cmd_upgrade_machine（原独立分项）
             for n in group_map[name]:
                 state.set_enabled(n, enabled)
         elif name == "cmd_randomimg":
-            # 「随机图片」模块总开关：一键开/关所有随机图子命令
-            for f in commands._COMMANDS:
-                if f.__name__ in randomimg.RANDOMIMG_CMD_NAMES:
-                    state.set_enabled(f.__name__, enabled)
+            # 「随机图片」模块总开关：一键开/关所有随机图子命令（含随机图清单入口）
+            for n in randomimg.RANDOMIMG_CMD_NAMES | {"cmd_random_menu"}:
+                state.set_enabled(n, enabled)
         elif name == "cmd_game":
-            # 「游戏娱乐」模块总开关：一键开/关所有游戏子命令
-            for n in GAME_CMD_NAMES:
+            # 「游戏娱乐」模块总开关：一键开/关所有游戏子命令（含钓鱼、卡牌与各功能清单）
+            for n in GAME_CMD_NAMES | {"cmd_game_menu"}:
                 state.set_enabled(n, enabled)
         elif name == "cmd_other":
-            # 「其他功能」模块总开关：一键开/关其余所有功能命令
-            for n in OTHER_CMD_NAMES:
+            # 「其他功能」模块总开关：一键开/关其余所有功能命令（含其他功能清单入口）
+            for n in OTHER_CMD_NAMES | {"cmd_other_menu"}:
                 state.set_enabled(n, enabled)
-        elif name == "cmd_cards":
-            # 「卡牌制作」模块总开关：一键开/关全部卡牌命令
-            for n in CARD_CMD_NAMES:
+        elif name == "cmd_test":
+            # 「测试功能」模块总开关：一键开/关打招呼、更新、版本、网页测试
+            for n in TEST_CMD_NAMES:
                 state.set_enabled(n, enabled)
         else:
             state.set_enabled(name, enabled)
@@ -345,6 +396,13 @@ class WebUI:
     # ---------- AI 对话配置 API ----------
     async def ai_config(self, request):
         return web.json_response(await ai_mod.get_config())
+
+    async def ai_providers(self, request):
+        """可选服务商列表（供前端渲染下拉框与默认值）。"""
+        try:
+            return web.json_response({"ok": True, "providers": ai_mod.list_providers()})
+        except Exception as e:
+            return web.json_response({"ok": False, "msg": str(e), "providers": []})
 
     async def ai_save_config(self, request):
         data = await request.json() or {}
@@ -753,19 +811,20 @@ PAGE_HTML = """<!DOCTYPE html>
           <option value="openai">OpenAI</option>
           <option value="other">其他（自定义兼容端点）</option>
         </select>
+        <div class="help" id="ai-provider-hint" style="margin-top:4px"></div>
       </div>
       <div>
         <div class="help">API Key</div>
         <input type="password" id="ai-key" placeholder="sk-..." style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db">
       </div>
       <div>
-        <div class="help">Base URL（OpenAI 兼容端点）</div>
+        <div class="help">Base URL / API 根地址（留空用该服务商默认）</div>
         <input type="text" id="ai-base" placeholder="https://api.deepseek.com" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db">
       </div>
       <div>
-        <div class="help">模型 Model</div>
+        <div class="help">模型 Model（留空用默认）</div>
         <div style="display:flex;gap:6px">
-          <input type="text" id="ai-model" placeholder="deepseek-flash" style="flex:1;padding:6px;border-radius:6px;border:1px solid #d1d5db">
+          <input type="text" id="ai-model" placeholder="deepseek-chat" style="flex:1;padding:6px;border-radius:6px;border:1px solid #d1d5db">
           <button onclick="fetchAiModels()" style="background:#6366f1;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer">获取模型</button>
         </div>
         <select id="ai-model-list" style="width:100%;margin-top:6px;padding:5px;border-radius:6px;border:1px solid #d1d5db" onchange="document.getElementById('ai-model').value=this.value"></select>
@@ -779,6 +838,10 @@ PAGE_HTML = """<!DOCTYPE html>
       <div><div class="help">保留对话轮数</div><input type="number" id="ai-history" min="2" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
       <div><div class="help">记忆总结间隔（0=关闭）</div><input type="number" id="ai-interval" min="0" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
       <div><div class="help">温度</div><input type="number" id="ai-temp" step="0.05" min="0" max="2" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px">
+      <div><div class="help">最大输出 tokens（0=用服务商默认；Claude 必填，内部兜底 2048）</div><input type="number" id="ai-maxtokens" min="0" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
+      <div><div class="help">请求超时（秒）</div><input type="number" id="ai-timeout" min="5" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
       <button onclick="saveAi()" style="background:#22c55e;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer">保存配置</button>
@@ -1018,7 +1081,7 @@ async function refresh(){
         <div id="lolicon-filters" data-filters="${(d.lolicon_filters||{}).nsfw===false?0:1},${(d.lolicon_filters||{}).racy===false?0:1}" style="margin-top:8px"></div>
         <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关全部图源；下方小开关可单独控制每个图源</div>
       </div>`;
-      } else if (c.name === 'cmd_game' || c.name === 'cmd_other') {
+      } else if (c.name === 'cmd_game' || c.name === 'cmd_other' || c.name === 'cmd_test') {
         const subs = c.sub||[];
         const flat = subs.filter(s => !(s.sub && s.sub.length));
         const nested = subs.filter(s => s.sub && s.sub.length);
@@ -1026,17 +1089,12 @@ async function refresh(){
       <div style="padding:4px 0 10px;border-top:1px dashed #eef2ff;margin-top:2px">
         <div style="display:flex;flex-wrap:wrap;gap:8px">${flat.map(subSwitch).join('')}</div>
         ${nested.length ? `<div style="display:flex;flex-direction:column;gap:2px;margin-top:2px">${nested.map(pluginRow).join('')}</div>` : ''}
-        <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关整个模块；下方每个插件一个总开关，不逐条列底层命令</div>
-      </div>`;
-      } else if (c.name === 'cmd_cards') {
-        extra = `
-      <div style="padding:4px 0 10px;border-top:1px dashed #eef2ff;margin-top:2px">
-        <div style="font-size:11px;color:#999">总开关一键开/关全部卡牌命令（制作 / 收集册 / 我的卡牌 / 销毁 / 市场 / 上架 / 下架 / 购买 / 素材包 / 购买素材）</div>
+        <div style="font-size:11px;color:#999;margin-top:6px">总开关一键开/关整个模块；下方每个功能一个总开关，不逐条列底层命令</div>
       </div>`;
       }
       const cTitle = c.title || (c.keywords && c.keywords.length ? c.keywords.join(' / ') : c.name);
-      // 模块（随机图片 / 游戏娱乐 / 其他功能 / 卡牌制作）没有独立群黑白名单，不显示该行，避免误操作
-      const grpBlock = (c.name === 'cmd_randomimg' || c.name === 'cmd_game' || c.name === 'cmd_other' || c.name === 'cmd_cards') ? '' : `
+      // 模块（随机图片 / 游戏娱乐 / 其他功能 / 测试功能）没有独立群黑白名单，不显示该行，避免误操作
+      const grpBlock = (c.name === 'cmd_randomimg' || c.name === 'cmd_game' || c.name === 'cmd_other' || c.name === 'cmd_test') ? '' : `
       <div class="grp">
         <select id="gr-mode-${c.name}" onchange="saveGroup('${c.name}')">
           <option value="" ${mode===''?'selected':''}>全部群</option>
@@ -1186,6 +1244,38 @@ async function copyUrl(){
   }
 }
 // ---------- AI 对话配置 ----------
+// 服务商元数据（启动时从 /api/ai/providers 拉取，用于动态渲染下拉与默认值）
+let AI_PROVIDERS = [];
+let AI_PROVIDER_MAP = {};
+
+async function loadAiProviders(){
+  try{
+    const d = await (await fetch('/api/ai/providers')).json();
+    if(d && d.ok && Array.isArray(d.providers) && d.providers.length){
+      AI_PROVIDERS = d.providers;
+      AI_PROVIDER_MAP = {};
+      d.providers.forEach(p => AI_PROVIDER_MAP[p.id] = p);
+      const sel = document.getElementById('ai-provider');
+      if(sel){
+        const cur = sel.value;
+        sel.innerHTML = AI_PROVIDERS.map(p=>
+          `<option value="${p.id}">${p.name}${p.site ? '  ·  '+p.site : ''}</option>`
+        ).join('');
+        if(cur && AI_PROVIDER_MAP[cur]) sel.value = cur;
+      }
+    }
+  }catch(e){}
+}
+function aiProviderHint(){
+  const v = document.getElementById('ai-provider').value;
+  const p = AI_PROVIDER_MAP[v];
+  const el = document.getElementById('ai-provider-hint');
+  if(!el) return;
+  if(!p){ el.textContent = ''; return; }
+  const fmt = {openai:'OpenAI 兼容', gemini:'Gemini 原生', anthropic:'Anthropic 原生'}[p.chat_format] || p.chat_format;
+  const auth = {bearer:'Bearer 头', 'x-api-key':'x-api-key 头', query:'URL 参数'}[p.auth_type] || p.auth_type;
+  el.textContent = `接口格式：${fmt}　认证：${auth}　默认模型：${p.default_model || '（需自填）'}`;
+}
 // 自动刷新时同步 AI 开关状态，避免页面显示与实际开关不一致（只更新开关和提示文字，不覆盖未保存的输入框）
 async function syncAiToggle(){
   try{
@@ -1196,8 +1286,15 @@ async function syncAiToggle(){
     document.getElementById('ai-enable-label').textContent = d.enabled ? '● 已启用（@机器人 或私聊触发）' : '○ 未启用';
   }catch(e){}
 }
+// 数字回填：0 是合法值，不能用 || 兜底（否则「记忆间隔=0（关闭）」会被错误显示成 5）
+function setNum(id, v, dflt){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.value = (v === 0 || v) ? v : (dflt !== undefined ? dflt : '');
+}
 async function loadAi(){
   try{
+    if(!AI_PROVIDERS.length) await loadAiProviders();
     const d = await (await fetch('/api/ai/config')).json();
     document.getElementById('ai-enabled').checked = !!d.enabled;
     document.getElementById('ai-provider').value = d.provider || 'deepseek';
@@ -1205,17 +1302,25 @@ async function loadAi(){
     document.getElementById('ai-base').value = d.base_url || '';
     document.getElementById('ai-model').value = d.model || '';
     document.getElementById('ai-preset').value = d.system_preset || '';
-    document.getElementById('ai-history').value = d.max_history || 12;
-    document.getElementById('ai-interval').value = d.memory_interval || 5;
-    document.getElementById('ai-temp').value = d.temperature || 0.85;
+    setNum('ai-history', d.max_history, 12);
+    setNum('ai-interval', d.memory_interval, 0);
+    setNum('ai-temp', d.temperature, 0.85);
+    setNum('ai-maxtokens', d.max_tokens, 0);
+    setNum('ai-timeout', d.timeout, 90);
     document.getElementById('ai-enable-label').textContent = d.enabled ? '● 已启用（@机器人 或私聊触发）' : '○ 未启用';
+    aiProviderHint();
   }catch(e){}
 }
 function sceneProvider(){
-  const pre = {deepseek:'https://api.deepseek.com', siliconflow:'https://api.siliconflow.cn/v1', openai:'https://api.openai.com/v1', other:''};
   const v = document.getElementById('ai-provider').value;
-  const def = pre[v];
-  if(def && !document.getElementById('ai-base').value.trim()) document.getElementById('ai-base').value = def;
+  const p = AI_PROVIDER_MAP[v];
+  // 切换服务商时同步带出该服务商的默认地址与模型（用户仍可手改）
+  if(p){
+    document.getElementById('ai-base').value = p.default_base || '';
+    if(p.default_model) document.getElementById('ai-model').value = p.default_model;
+  }
+  aiProviderHint();
+  document.getElementById('ai-model-list').innerHTML = '';
 }
 async function saveAi(){
   const body = {
@@ -1226,12 +1331,15 @@ async function saveAi(){
     model: document.getElementById('ai-model').value.trim(),
     system_preset: document.getElementById('ai-preset').value,
     max_history: parseInt(document.getElementById('ai-history').value)||12,
-    memory_interval: parseInt(document.getElementById('ai-interval').value)||5,
-    temperature: parseFloat(document.getElementById('ai-temp').value)||0.85
+    memory_interval: parseInt(document.getElementById('ai-interval').value)||0,
+    temperature: parseFloat(document.getElementById('ai-temp').value)||0.85,
+    max_tokens: parseInt(document.getElementById('ai-maxtokens').value)||0,
+    timeout: parseInt(document.getElementById('ai-timeout').value)||90
   };
   const d = await (await fetch('/api/ai/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   document.getElementById('ai-feedback').textContent = d.ok ? '✓ 已保存' : '保存失败';
   document.getElementById('ai-enable-label').textContent = body.enabled ? '● 已启用' : '○ 未启用';
+  if(d.ok && d.config){ document.getElementById('ai-base').value = d.config.base_url || ''; document.getElementById('ai-model').value = d.config.model || ''; }
   loadBalance(); loadMem();
 }
 async function aiTest(){
@@ -1245,7 +1353,11 @@ async function fetchAiModels(){
   const d = await (await fetch('/api/ai/models',{method:'POST'})).json();
   const sel = document.getElementById('ai-model-list');
   if(d.ok && d.models && d.models.length){
-    sel.innerHTML = d.models.map(m=>`<option value="${m}">${m}</option>`).join('');
+    sel.innerHTML = d.models.map(m=>{
+      const id = (typeof m === 'string') ? m : (m.id || '');
+      const nm = (typeof m === 'string') ? m : (m.name || m.id || '');
+      return `<option value="${id}">${nm}${nm === id ? '' : '  ('+id+')'}</option>`;
+    }).join('');
     document.getElementById('ai-feedback').textContent = '✓ 共 ' + d.models.length + ' 个模型，可从下拉选择';
   } else {
     document.getElementById('ai-feedback').textContent = '✗ 获取模型失败：' + (d.msg||'');

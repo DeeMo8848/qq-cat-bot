@@ -250,16 +250,20 @@ async def dispatch(ctx):
             from bot.parse import gateway
             if await gateway.engine().handle(ctx):
                 return
-    except Exception:
-        pass
+    except Exception as e:
+        # 以前这里是静默 pass，导致「解析不触发」时完全查不出原因（日志里连一行都没有）。
+        # 解析失败不该影响后续 AI 兜底，所以只记日志、不抛。
+        print("[解析] 多平台解析异常: %s: %s" % (type(e).__name__, e), flush=True)
+        import traceback
+        traceback.print_exc()
 
     # AI 兜底：其他所有命令都没命中时，@机器人（群）或私聊的普通消息交给 AI 接入聊
     try:
         from bot.ai import ai
         if await ai.handle_candidate(ctx, text):
             return
-    except Exception:
-        pass
+    except Exception as e:
+        print("[AI] 兜底回答异常: %s: %s" % (type(e).__name__, e), flush=True)
 
     # 未识别：群聊里闲聊极易误触发，静默以避免打扰；私聊仍给提示
     if ctx.scene != "group":
@@ -287,3 +291,4 @@ from plugins import fishing  # noqa: E402,F401
 from plugins import webtest  # noqa: E402,F401
 from plugins import cards  # noqa: E402,F401
 from plugins import selfupdate  # noqa: E402,F401
+from plugins import ops  # noqa: E402,F401
