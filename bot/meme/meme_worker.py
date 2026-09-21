@@ -10,6 +10,22 @@
 结果以一行 JSON 输出到 stdout：
     {"ok": true, "file": "/abs/path/到/生成文件"}
     或 {"ok": false, "error": "错误信息"}
+
+字体策略（重要）
+----------------
+meme_generator 的文字渲染走 pil_utils.Text2Image，底层是 **Skia**，
+而 Skia 是**按字体族名**（family name）查找字体的，不是按文件路径。
+meme_generator 自身不带任何字体，它依赖宿主系统装好 FZShaoEr-M11S /
+Noto Sans SC 等族名 —— 干净的 Linux 服务器上这些一个都不存在，
+Skia 就会匹配不到、落回没有 CJK 字形的兜底字体，渲染出来全是「口口口口」。
+
+解决办法：调用 `bot.core.fonts.install()`，把项目内置字体包
+（`bot/assets/fonts/qqbot-fonts.ttc`，含 21 个族名别名）注入 Skia 的
+FontManager。详见 `bot/core/fonts.py` 的模块文档。
+
+注意：**只注册、不删除**。有些 meme（如 feiyu 符箓）自己用
+`ImageFont.truetype(绝对路径)` 加载了自定义字体，走的是另一条路，
+本注入不会、也不应该覆盖它们。
 """
 
 import argparse
@@ -25,6 +41,15 @@ _PROJ_ROOT = Path(__file__).resolve().parent.parent.parent
 def _init():
     # 把项目根加入 sys.path，读取 config 里解析好的自定义 meme 目录
     sys.path.insert(0, str(_PROJ_ROOT))
+
+    # ★ 字体必须在任何 meme 渲染之前注入，否则 Skia 会按族名找不到字体
+    try:
+        from bot.core.fonts import install as _install_fonts
+        _install_fonts(_PROJ_ROOT, verbose=True)
+    except Exception as e:
+        print("[fonts] 注入失败（不影响渲染，可能出豆腐块）：%r" % (e,),
+              file=sys.stderr, flush=True)
+
     from config import MEME_CUSTOM_DIR
 
     # 加载内置 + 用户扩展（项目内 custom_memes），确保全部模板可用

@@ -41,8 +41,20 @@ tunnel/
 # 运行时下载的工具（由 install.ps1 首次自动拉取）
 tools/
 
+# 项目级共享 venv：给 cardforge 等需要独立依赖的工具复用，位置固定 tools/.venv。
+# 由 install 脚本创建（见 bot/core/venv.py），体积大且可重建，不入库。
+# 上面 tools/ 已覆盖，这里显式写出以表明「这是运行时目录，不是项目资产」。
+tools/.venv/
+
 # 运行时从 GitHub 资源仓库克隆的素材（图库/龙图，由 install.ps1 拉取，不入库）
 resources/
+
+# ⚠️ 注意：bot/assets/fonts/ 是【必须入库】的项目资产（内置字体包），
+#    用于让 meme 等渲染在没装中文字体的机器上也正常出字，别加忽略规则。
+#    重新生成：python bot/meme/build_font_bundle.py
+#    内含：
+#      qqbot-fonts.ttc     中文字体集合（21 个族名别名，约 3.6MB）
+#      NotoColorEmoji.ttf  彩色 emoji（Noto Color Emoji，OFL-1.1，约 10MB）
 
 # 运行时从 meme 源仓库拉取的批量模板（不入库；feiyu 为本地移植插件需保留）
 bot/meme/custom_memes/*

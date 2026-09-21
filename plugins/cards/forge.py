@@ -103,21 +103,37 @@ async def _run_forge(args: list, timeout: int = 1800):
     """执行 cardforge（JSON 输出），返回 (退出码, 输出文本)。
 
     跨平台解析解释器：
-      1. cardforge 自带的 venv（Windows 在 .venv/Scripts/，POSIX 在 .venv/bin/）
-      2. 项目配置的 PYTHON（settings.json 的 PYTHON 字段）
-      3. 当前解释器 sys.executable
+      1. 项目级共享 venv（tools/.venv，见 bot/core/venv.py）
+      2. cardforge 自带的 venv（Windows 在 .venv/Scripts/，POSIX 在 .venv/bin/）
+      3. 项目配置的 PYTHON（settings.json 的 PYTHON 字段）
+      4. 当前解释器 sys.executable
     这样 Linux 上不会再退化成必须靠 cmd / cardforge.cmd 才能跑。
+
+    ★ 为什么共享 venv 排在自带 venv 之前：共享 venv 是项目统一管理的，
+      位置固定、可被多个工具复用；cardforge 自带的那个属于它自己的历史遗留，
+      两者其实指向同一份依赖，优先用统一的那个以避免"两套环境行为不一致"。
     """
     import sys
 
     py = ""
-    for rel in (os.path.join(".venv", "Scripts", "python.exe"),
-                os.path.join(".venv", "bin", "python"),
-                os.path.join(".venv", "bin", "python3")):
-        cand = os.path.join(CARDFORGE_DIR, rel)
-        if os.path.isfile(cand):
-            py = cand
-            break
+    # 1) 项目级共享 venv
+    try:
+        from bot.core.venv import python_exe as _shared_py
+        py = _shared_py(ROOT) or ""
+    except Exception:
+        py = ""
+
+    # 2) cardforge 自带 venv
+    if not py:
+        for rel in (os.path.join(".venv", "Scripts", "python.exe"),
+                    os.path.join(".venv", "bin", "python"),
+                    os.path.join(".venv", "bin", "python3")):
+            cand = os.path.join(CARDFORGE_DIR, rel)
+            if os.path.isfile(cand):
+                py = cand
+                break
+
+    # 3) settings.json 配置的 PYTHON
     if not py:
         try:
             from config import PYTHON as _CFG_PYTHON
@@ -125,6 +141,7 @@ async def _run_forge(args: list, timeout: int = 1800):
                 py = _CFG_PYTHON
         except Exception:
             pass
+    # 4) 当前解释器
     if not py:
         py = sys.executable or "python"
 
@@ -142,6 +159,27 @@ async def _run_forge(args: list, timeout: int = 1800):
     # 强制子进程用 UTF-8 输出，否则 bot 端按 utf-8 解码会得到乱码路径
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
+    # ★ 告诉 cardforge 用哪个 venv（它的 setup.sh/cardforge.sh 会读这个变量）。
+    #   这样共享 venv 的位置由 bot 决定，cardforge 不必自己猜。
+    try:
+        from bot.core.venv import venv_dir as _venv_dir
+        _vd = _venv_dir(ROOT)
+        if _vd.is_dir():
+            env["CARDFORGE_VENV"] = str(_vd)
+    except Exception:
+        pass
+    # ★ 把 bot 的内置字体目录传给 cardforge。
+    #   cardforge 的卡面文字原先硬编码 ImageFont.truetype("msyh.ttc")（Windows 专有），
+    #   在 Linux 上会退化成没有 CJK 字形的 load_default()，卡面中文全是「口口口」。
+    #   它现在会优先读这个环境变量指向的字体，这样两个项目共用同一份字体包，
+    #   换设备/换服务器都不需要另外装字体。
+    try:
+        from bot.core.fonts import font_dir as _font_dir
+        _fd = _font_dir(ROOT)
+        if os.path.isdir(_fd):
+            env["CARDFORGE_FONT_DIR"] = str(_fd)
+    except Exception:
+        pass
     proc = await asyncio.create_subprocess_exec(
         *cmd, cwd=CARDFORGE_DIR, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,

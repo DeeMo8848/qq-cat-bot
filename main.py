@@ -15,6 +15,7 @@ import time
 import botpy
 
 from bot import commands  # noqa: F401  确保命令模块加载
+from bot.core import fonts as _fonts
 from bot.core import vpn_bypass
 from bot.core.sender import Sender
 from bot.core.static_server import start_static
@@ -24,6 +25,10 @@ from bot.core.webui import start_webui
 from config import APPID, SECRET, DEBUG, WEBUI_PORT, WEBHOOK_PORT, STATIC_PUBLIC_URL
 
 _LOG_LEVEL = "DEBUG" if DEBUG else "INFO"
+
+# 把项目内置字体注入 Skia —— 供所有走「字体族名」的渲染（meme 等）使用，
+# 避免服务器/新设备没装中文字体时渲染出「口口口口」。详见 bot/core/fonts.py。
+_fonts.install(verbose=DEBUG)
 
 
 class MyBot(botpy.Client):
@@ -52,6 +57,16 @@ class MyBot(botpy.Client):
         print(f"   后台: http://127.0.0.1:{WEBUI_PORT}")
         print("   现在可以在 QQ 里 @它 发「菜单」或「你好」测试了。")
         print("=" * 50)
+
+        # 启动/重启完成提醒：默认发给「触发重启的那个会话」。
+        # 由 bot/core/boot_notify.py 按 state.json 的 boot_notify 模式决定发不发、发给谁。
+        # 整个流程失败都不应影响 bot 主流程，因此全包在 try 里。
+        try:
+            from bot.core import boot_notify
+            await boot_notify.send_boot_notify(self.sender, self.api)
+        except Exception as e:
+            print(f"[ops] 启动提醒发送失败（不影响运行）: {type(e).__name__}: {e}",
+                  flush=True)
 
     # ---------- 消息事件 ----------
     async def on_group_at_message_create(self, message):   # 群聊里被 @

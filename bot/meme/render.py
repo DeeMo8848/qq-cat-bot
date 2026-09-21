@@ -15,9 +15,13 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+# 项目根：bot/meme/ 往上两级
+_PROJ_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PAGE_MAX_H = 5200  # 单张图最大高度，超过则按整行切分成多张
 
@@ -71,6 +75,15 @@ def main():
 
     from PIL import Image
     from meme_generator.utils import render_meme_list
+
+    # ★ 列表图也要渲染中文，必须注入内置字体（否则服务器上全豆腐块）
+    if str(_PROJ_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJ_ROOT))
+    try:
+        from bot.core.fonts import install as _install_fonts
+        _install_fonts(_PROJ_ROOT)
+    except Exception:
+        pass
 
     meme_map = _load_meme_map()
     seen = set()
