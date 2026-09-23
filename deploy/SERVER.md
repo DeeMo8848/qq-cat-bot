@@ -24,7 +24,8 @@ journalctl -u qqbot -f            # 实时日志（systemd 视角）
 
 tail -f /root/qq-cat-bot/logs/bot.log       # 主日志
 tail -f /root/qq-cat-bot/logs/bot.err.log   # botpy 日志
-tail -f /root/qq-cat-bot/cloudflared.log    # 隧道日志
+tail -f /www/wwwlogs/qqbot.deemo8848.dpdns.org.log   # nginx 访问日志（公网入口）
+tail -f /root/qq-cat-bot/cloudflared.log    # 隧道日志（隧道已弃用，仅在 TUNNEL_ENABLED=true 时有内容）
 
 bash deploy/start.sh --restart    # 不走 systemd 时的重启方式
 ```
@@ -33,10 +34,10 @@ bash deploy/start.sh --restart    # 不走 systemd 时的重启方式
 
 | 端口 | 用途 | 公网域名 |
 |---|---|---|
-| 9090 | WebUI 后台 | 仅本机（如需外网自行开隧道路由） |
-| 9091 | Webhook 回调 | `https://qqbot.deemo8848.dpdns.org` |
-| 9092 | 静态页（`bot/public_html/`） | `https://page.deemo8848.dpdns.org` |
-| 8082/8083 | 预留 proj1/proj2 | `proj1/proj2.deemo8848.dpdns.org` |
+| 9090 | WebUI 后台 | 仅本机（`BIND_ADDR=0.0.0.0`，切勿随意暴露） |
+| 9091 | Webhook 回调 | `https://qqbot.deemo8848.dpdns.org`（nginx 反代） |
+| 9092 | 静态页（`bot/public_html/`） | `https://page.deemo8848.dpdns.org`（nginx 反代） |
+| 8082/8083 | 预留 proj1/proj2 | 未启用（需要时见第五节） |
 
 ## 四、★ 装依赖的坑（务必按此装）
 
@@ -177,21 +178,88 @@ awk '/MemAvailable/{printf "可用内存 %.0f MB\n", $2/1024}' /proc/meminfo
 
 配好后 `engine_name` 传 `api` 即走阿里云分割抠图，本地零模型、零内存压力。
 
-## 五、隧道（cloudflared）
+## 五、公网入口（A 记录 + 宝塔 nginx 反代）
 
-配置文件 `/root/qq-cat-bot/tunnel/config.yml`（**不在仓库里**，需手工维护）：
-```yaml
-tunnel: a87b43d7-88a8-4ac6-89d4-c680313bf2a8
-credentials-file: /root/.cloudflared/a87b43d7-88a8-4ac6-89d4-c680313bf2a8.json
-protocol: http2
-ingress: ...
+> **2026-09-24 变更**：原先用 Cloudflare 隧道（cloudflared）暴露 9091/9092，
+> 后因 **Cloudflare 收紧 `cfargotunnel.com` 解析**（只返回内部 IPv6 ULA `fd10::`，
+> 不再返回公网 IPv4 边缘 IP）+ **隧道要求域名 NS 必须托管在 Cloudflare**
+> （本域 NS 在 DigitalPlat，属第三方 DNS，官方明确不支持 Free 版这种用法），
+> 隧道彻底不可用。**已改为「A 记录直连 + 宝塔 nginx 反代」**，与 `minigame` 一致。
+> bot 侧也默认关闭了隧道启动（`settings.json` 的 `TUNNEL_ENABLED`，默认 false）。
+
+### 域名 → 后端 映射
+
+| 域名 | 后端端口 | 用途 |
+|---|---|---|
+| `qqbot.deemo8848.dpdns.org` | 127.0.0.1:9091 | Webhook 回调（腾讯推送全量群消息） |
+| `page.deemo8848.dpdns.org` | 127.0.0.1:9092 | 静态页（`bot/public_html/`） |
+| `minigame.deemo8848.dpdns.org` | 127.0.0.1:9094 | 五子棋平台 |
+
+DNS 侧：均为 **A 记录指向 `47.83.166.37`**（在 DigitalPlat 面板维护）。
+★ DigitalPlat 的 CNAME 值**末尾必须带点**（FQDN），否则面板会当相对名并追加 zone 名。
+
+### nginx 配置位置
+
+站点由宝塔创建，**反代写在站点级扩展目录**（面板重写站点 conf 也不会冲掉）：
+
 ```
-凭据 JSON 权限需 `600`，目录 `700`。
+/www/server/panel/vhost/nginx/extension/<域名>/proxy.conf
+```
 
-**验证是否真连上**（bot 控制台打印"已启动"不算数）：
+内容形如（保留 `/.well-known` 供证书验证，其余整站反代）：
+```nginx
+location ^~ /.well-known/ { allow all; root /www/wwwroot/<域名>; }
+location ^~ / {
+    proxy_pass http://127.0.0.1:9091;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 50m;
+}
+```
+
+### 验证（不依赖 DNS，改完立刻可测）
+
 ```bash
-grep "Registered tunnel connection" cloudflared.log | tail -4
+# 反代是否通：后端自身的响应应该出现
+curl -s -H 'Host: qqbot.deemo8848.dpdns.org' http://127.0.0.1/     # → webhook ok
+# SNI 路由返回的证书对不对
+echo | openssl s_client -connect 127.0.0.1:443 -servername qqbot.deemo8848.dpdns.org 2>/dev/null \
+  | openssl x509 -noout -subject -dates
 ```
+> ★ `nginx -s reload` 是**异步平滑重启**：紧接着 reload 的第一次请求可能仍命中旧
+> worker（表现为"配置明明写对了却返回旧页面"）。**稍等 1~2 秒再验。**
+
+### 证书（Let's Encrypt，acme.sh 自动续期）
+
+```bash
+# 申请 + 安装（webroot 模式，走站点的 /.well-known/）
+/root/.acme.sh/acme.sh --issue -d <域名> --webroot /www/wwwroot/<域名> \
+  --server letsencrypt --keylength ec-256
+/root/.acme.sh/acme.sh --install-cert -d <域名> --ecc \
+  --key-file /www/server/panel/vhost/cert/<域名>/privkey.pem \
+  --fullchain-file /www/server/panel/vhost/cert/<域名>/fullchain.pem \
+  --reloadcmd "/www/server/nginx/sbin/nginx -s reload"
+```
+续期由 acme.sh 的全局 cron 统一负责（`59 5,11,17,23 * * * acme.sh --cron`）。
+
+### 新增子域名（两条现成命令）
+
+```bash
+/www/server/panel/pyenv/bin/python /root/_setup_proxy_site.py <域名> <后端端口> "备注"
+/root/qq-cat-bot/.venv/bin/python /root/_enable_https_domain.py <域名>
+```
+第一条：宝塔建站 + 写扩展配置 + `nginx -t` + reload（幂等，带备份与失败回滚）；
+第二条：申请证书 → 安装 → 加 `listen 443 ssl` + SSL 段 → reload。
+前置条件：DNS 里已有指向 `47.83.166.37` 的 **A 记录**（证书的 HTTP 文件验证要用）。
+
+### 附：cloudflared 隧道（已弃用，保留备查）
+
+`tunnel/config.yml` 与 `/root/.cloudflared/<uuid>.json` 仍在，但**默认不再启动**
+（`TUNNEL_ENABLED=false`）。若将来域名 NS 迁到 Cloudflare，可在 `settings.json` 里
+打开它。**注意：隧道要求域名 NS 托管在 Cloudflare，否则配了也不生效。**
 
 ## 六、改代码后如何生效
 
@@ -290,5 +358,8 @@ WantedBy=multi-user.target
 
 入方向需放行：**9090**（后台）、**9091**（Webhook）、**9092**（静态页）。
 - 授权对象填 `0.0.0.0/0`；**不要填自己当前公网 IP** —— 家宽/4G 是动态 IP，变了就连不上（曾踩过：记录 `39.70.214.115`，次日变 `39.70.5.150`）。
-- 若只想本机访问，改 `settings.json` 的 `BIND_ADDR` 回 `127.0.0.1`，走 cloudflared 隧道访问。
-- ⚠️ **WebUI 后台没有任何身份验证**，`BIND_ADDR=0.0.0.0` 等于把「开关插件、改配置、改玩家余额、关机器人」全部暴露给公网。仅用于自用测试，长期建议收回 `127.0.0.1` + 隧道。
+- ★ **推荐现状**：公网入口交给 nginx 反代（反代目标是 `127.0.0.1:9091/9092`），
+  所以 `settings.json` 里把 `BIND_ADDR` 设成 **`127.0.0.1`** 最安全 —— 9091/9092 不再
+  直接对公网开放，只留 80/443 由 nginx 统一收口。若确实需要公网直连端口，再改回 `0.0.0.0`。
+- ⚠️ **WebUI 后台没有任何身份验证**，`BIND_ADDR=0.0.0.0` 等于把「开关插件、改配置、
+  改玩家余额、关机器人」全部暴露给公网。若只想让它本机可见，单独设 `WEBUI_BIND=127.0.0.1`。
