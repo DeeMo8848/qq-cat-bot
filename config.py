@@ -95,6 +95,17 @@ def _display_host(bind_addr: str, port: int) -> str:
 STATIC_PORT = int(_cfg("STATIC_PORT", 9092))
 STATIC_PUBLIC_URL = _cfg("STATIC_PUBLIC_URL", "https://page.deemo8848.dpdns.org")
 
+# ---- 内网穿透（cloudflared 隧道）----
+# 是否启动 cloudflared 隧道。**默认 False**：
+#   生产环境已改用「A 记录 + 宝塔 nginx 反代」直接把 9091/9092 暴露到公网
+#   （见 deploy/SERVER.md 第五节），不再需要隧道；让 bot 少拉起一个常驻进程。
+# 什么时候才需要打开：
+#   ① 服务器/本机没有公网 IP（家用宽带了？内网机器）
+#   ② 想隐藏源站 IP
+# ★ 注意：Cloudflare Tunnel 要求域名由 Cloudflare 权威托管（NS 指向 Cloudflare）。
+#   若域名的 NS 在别处（如 DigitalPlat），隧道配置写了也不会生效。
+TUNNEL_ENABLED = bool(_cfg("TUNNEL_ENABLED", False))
+
 # 执行 meme worker / B站渲染子进程所用的 Python —— 见文件末尾统一解析
 # （默认取当前解释器 sys.executable，避免 PATH 里没有 python 命令导致子进程失败）
 

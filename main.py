@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import sys
 import time
 
 import botpy
@@ -22,7 +23,23 @@ from bot.core.static_server import start_static
 from bot.core.tunnel import TunnelManager
 from bot.core.webhook import start_webhook
 from bot.core.webui import start_webui
-from config import APPID, SECRET, DEBUG, WEBUI_PORT, WEBHOOK_PORT, STATIC_PUBLIC_URL
+from config import (APPID, SECRET, DEBUG, WEBUI_PORT, WEBHOOK_PORT,
+                    STATIC_PUBLIC_URL, TUNNEL_ENABLED)
+
+# stdout 行缓冲：systemd 用 `StandardOutput=append:` 把输出重定向到文件时，
+# Python 会判定 stdout 非 tty 而启用块缓冲（4KB/8KB），导致 logs/bot.log
+# 迟迟不落盘、排障时看不到实时输出（2026-09-24 排 4009 故障时吃过这个亏）。
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001 —— 个别环境不支持 reconfigure，忽略即可
+    pass
+
+# 修补 botpy 网关的重连缺陷：4009 死循环 + 心跳协程静默死亡。
+# 必须在 MyBot 实例化之前生效，详见 bot/core/botpy_resilience.py。
+from bot.core import botpy_resilience as _resilience  # noqa: E402
+
+_resilience.install(verbose=DEBUG)
 
 _LOG_LEVEL = "DEBUG" if DEBUG else "INFO"
 
@@ -111,9 +128,14 @@ async def run_bot_forever(bot):
 async def main():
     bot = MyBot()
 
-    # 启动 cloudflared 内网穿透（自动，非阻塞），供开放平台回调使用
+    # 内网穿透（默认关闭）。生产环境用「A 记录 + 宝塔 nginx 反代」直接暴露
+    # 9091/9092，无需隧道；仅在「无公网 IP」或「想隐藏源站 IP」时才在
+    # settings.json 里把 TUNNEL_ENABLED 设为 true。详见 deploy/SERVER.md 第五节。
     tunnel = TunnelManager(WEBHOOK_PORT)
-    tunnel.start()
+    if TUNNEL_ENABLED:
+        tunnel.start()
+    else:
+        print("[隧道] 已禁用（TUNNEL_ENABLED=false）—— 公网入口由 nginx 反代提供")
 
     # 保障「本机翻墙」与「隧道」共存：把 cloudflared 出站流量在代理内核里固定为直连
     # （否则 VPN 的 TUN 模式会把隧道流量丢给代理节点，bot 会在线的同时收不到消息）
