@@ -13,3 +13,6 @@ beautifulsoup4
 apscheduler
 bilibili-api
 apilmoji
+# Webhook 回调地址验证（op=13）要用 ed25519 签名；缺它会导致腾讯侧验证 500、
+# 进而完全不推送消息（现象：bot 在线但 @ 和不@都没反应）。见 bot/core/webhook.py。
+cryptography
