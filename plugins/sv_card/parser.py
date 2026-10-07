@@ -3,7 +3,7 @@
 
 按需求实现的解析规则：
 
-* 触发词随意混在大段文本里，先剥离；
+* 触发词须在消息开头（其后紧跟分隔符或结束），先剥离；
 * 参数之间可用 **空格 / ，/ , / * / . / - / 、/ | / /** 等任意组合分隔；
 * 参数顺序无关；
 * **无法识别的片段直接丢弃**（如「暴击率99」）；
@@ -53,12 +53,17 @@ _NUM_OK = re.compile(r"^\d{1,3}\+?$")
 
 
 def strip_triggers(text: str, triggers) -> str:
-    """从文本里剥掉命中的触发词（长的优先，避免「sv卡牌」抢了「sv卡牌效果图」）。"""
-    out = text or ""
+    """剥掉【开头】命中的触发词（长的优先，避免「sv卡牌」抢了「sv卡牌效果图」）。
+
+    ★ 只在开头剥离：触发词出现在句子中间（闲聊里提到「sv卡牌」）不算触发，
+    与 commands 侧 `_match_trigger` 的判据保持一致。
+    """
+    t = text or ""
+    stripped = t.lstrip()
     for tr in sorted(triggers, key=len, reverse=True):
-        if tr and tr in out:
-            return out.replace(tr, " ", 1)
-    return out
+        if tr and stripped.lower().startswith(tr.lower()):
+            return stripped[len(tr):]
+    return t
 
 
 def split_tokens(text: str):
