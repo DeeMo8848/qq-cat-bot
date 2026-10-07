@@ -21,6 +21,10 @@ PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(PLUGIN_DIR, "assets")
 BRIDGE = os.path.join(PLUGIN_DIR, "render_bridge.mjs")
 
+# 默认立绘：用户没引用图片时用它，保证「只发触发词」也能出图。
+# 用户自制素材（602×727 PNG，约 240KB），随代码入库 —— 见 .gitignore 里的例外规则。
+DEFAULT_ART = os.path.join(ASSETS_DIR, "default_art.png")
+
 TMP_DIR = os.path.join(ROOT, "tmp", "sv_card")
 
 # Node 可执行文件探测顺序：settings.json 覆盖 → PATH → 常见安装路径
@@ -139,10 +143,17 @@ async def render(config: dict, style: str = "wb", art_path: str = None,
 
 
 def cleanup(*paths):
-    """删除临时文件（渲染产物发出去之后调用）。"""
+    """删除临时文件（渲染产物发出去之后调用）。
+
+    ★ assets/ 下的文件永不删除 —— 默认立绘是长期素材，不能被清理逻辑误删。
+    """
+    assets_abs = os.path.abspath(ASSETS_DIR)
     for p in paths:
-        if p and os.path.isfile(p):
-            try:
-                os.remove(p)
-            except Exception:
-                pass
+        if not p or not os.path.isfile(p):
+            continue
+        if os.path.abspath(p).startswith(assets_abs + os.sep):
+            continue
+        try:
+            os.remove(p)
+        except Exception:
+            pass

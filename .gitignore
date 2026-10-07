@@ -52,7 +52,12 @@ resources/
 # 影之诗制卡器插件的渲染资源（wasm 内核 + 游戏字体 + 职业背景，约 39MB）。
 # 从「影之诗制卡器-官方开源版」复制而来（含 Cygames 版权素材），不入库。
 # 重建方式：python tmp/_sv_copy_assets.py（需先有原项目）
-plugins/sv_card/assets/
+#
+# 注意用 /* 而不是 /：目录整体被排除时，目录内部的 ! 例外规则不生效；
+# 用 /* 让 git 仍会进入该目录，下面那条例外才能起作用。
+plugins/sv_card/assets/*
+# 例外：默认立绘 —— 用户自制素材，功能必需（没引用图片时用它），体积小，随代码入库
+!plugins/sv_card/assets/default_art.png
 
 # ⚠️ 注意：bot/assets/fonts/ 是【必须入库】的项目资产（内置字体包），
 #    用于让 meme 等渲染在没装中文字体的机器上也正常出字，别加忽略规则。
