@@ -211,6 +211,38 @@ _S_BTN_TEXT = """# 🔘 按钮测试
 第一行是指令按钮（`enter=true`，点了直接发指令）；第二行有个蓝色线框样式和一个跳转按钮；
 第三行是回调按钮，点它会触发 `INTERACTION_CREATE` 事件。"""
 
+_S_CALLBACK = """# 🧪 回调按钮实验组
+
+**回调按钮（action.type=1）的价值**：点完立刻触发 bot，**不用再按发送** ——
+这是它和指令按钮的本质区别。
+
+下面 6 个按钮各测一种「收到点击后怎么产出消息」，**点一个看一个**：
+
+1. **① event_id 回复** —— 官方「被动消息(响应事件)」的写法（`event_id=`）
+2. **② 主动消息** —— 不带任何 id 直接发
+3. **③ 回 markdown** —— 用 `event_id` 回一条富文本
+4. **④ 回显 data** —— 验证 `button_data` 透传
+5. **⑤ code=1** —— 回应改成「操作失败」，看客户端提示怎么变
+6. **⑥ code=5** —— 回应改成「仅管理员操作」
+
+> ①②③④ 只要在群里收到 bot 的新消息，就说明**回调按钮能直接产出内容**
+> （真正做到省掉「输入 + 发送」）。
+> ⑤⑥ 只在客户端提示上观察差异。"""
+
+# 回调按钮实验组：data 用 `mdtest:<exp>` 约定，由 webhook 转给 plugins/md_test/interaction.py
+BTN_CALLBACK_LAB = {"content": {"rows": [
+    {"buttons": [
+        _btn("c1", "① event_id 回复", "已测", 0, 1, "mdtest:event"),
+        _btn("c2", "② 主动消息", "已测", 0, 1, "mdtest:active"),
+        _btn("c3", "③ 回 markdown", "已测", 0, 1, "mdtest:md"),
+    ]},
+    {"buttons": [
+        _btn("c4", "④ 回显 data", "已测", 1, 1, "mdtest:echo"),
+        _btn("c5", "⑤ code=1", "已测", 1, 1, "mdtest:code1"),
+        _btn("c6", "⑥ code=5", "已测", 1, 1, "mdtest:code5"),
+    ]},
+]}}
+
 _S_ALL = "\n\n".join([
     "# 全部语法合并",
     "## 标题二",
@@ -236,6 +268,7 @@ _SUBCMDS = {
     "全部": (_S_ALL, None),
     "按钮": (_S_BTN_TEXT, BTN_ONE_ROW),
     "多行按钮": (_S_BTN_TEXT, BTN_MULTI_ROW),
+    "回调": (_S_CALLBACK, BTN_CALLBACK_LAB),
 }
 
 _HELP = """🧪 Markdown 测试场 · 用法
@@ -245,6 +278,7 @@ md测试 标题 / 样式 / 列表 / 引用 / 分割 / 链接
 md测试 图片 / 换行 / 指令 / 全部
 md测试 按钮                单行按钮
 md测试 多行按钮            三行按钮（覆盖 3 种 action.type 与 2 种 style）
+md测试 回调                回调按钮实验组（6 个按钮，测点完后怎么产出消息）
 
 每个子命令只测一项，方便定位哪种语法不生效。"""
 

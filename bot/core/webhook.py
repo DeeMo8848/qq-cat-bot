@@ -236,26 +236,42 @@ class WebhookServer:
                  resolved.get("button_data"), iid), flush=True)
         if itype not in (11, 12) or not iid:
             return  # 其余类型无需回应
+        # —— 回调按钮实验分流（实现见 plugins/md_test/interaction.py）——
+        # button_data 形如 `mdtest:<exp>`；`mdtest:codeN` 用来测不同 code 的客户端表现。
+        bdata = resolved.get("button_data") or ""
+        exp = ""
+        put_code = 0
+        if isinstance(bdata, str) and bdata.startswith("mdtest:"):
+            exp = bdata[len("mdtest:"):]
+            if exp.startswith("code"):
+                try:
+                    put_code = int(exp[len("code"):])
+                except Exception:
+                    put_code = 0
+                exp = ""          # 纯 code 实验，不需要再产出消息
+
         try:
             from botpy.http import Route
             route = Route("PUT", "/interactions/{interaction_id}", interaction_id=iid)
-            await self.api._http.request(route, json={"code": 0})
+            await self.api._http.request(route, json={"code": put_code})
             # ★ 官方要求 3 秒内响应，超时客户端会弹「机器人服务响应异常」，所以耗时必须可观测
-            print("[webhook] 已回应互动事件 %s（code=0，耗时 %.0fms）"
-                  % (iid, (_t.monotonic() - t0) * 1000), flush=True)
+            print("[webhook] 已回应互动事件 %s（code=%s，耗时 %.0fms）"
+                  % (iid, put_code, (_t.monotonic() - t0) * 1000), flush=True)
         except Exception as e:
             _log.error("[webhook] 回应互动事件失败（耗时 %.0fms）: %s",
                        (_t.monotonic() - t0) * 1000, e)
             return
 
-        # ★ 实测记录（2026-10-08）：客户端点「回调按钮」会弹「机器人服务响应异常」，
-        #   但已证明**不是我们这边的问题** —— PUT 实测 79~109ms（官方限 3 秒）、返回 code=0、
-        #   客户端按钮状态也正常变成「已回调」。
-        #   试过的假说：把事件 id 当 msg_id 补发一条消息（官方称 id「用于被动消息发送和互动回调」）
-        #   → 平台直接拒绝：400 `{'code': 40034024, 'message': '请求参数msg_id无效或越权'}`。
-        #   结论：该提示属平台/客户端侧行为；代码侧已按官方要求做全（收到事件 → 3 秒内 PUT code=0）。
-        #   ★ 实务取舍：需要「点完立刻有反应」用 type=1 回调按钮（接受此提示）；
-        #     只是「快捷输入指令」用 type=2 指令按钮（无此提示，但用户还得手动按发送）。
+        # ★ 回调按钮实验（2026-10-08）：早先用 `msg_id=iid` 补发消息被平台拒绝
+        #   （400 `code=40034024 请求参数msg_id无效或越权`）。官方「消息收发概述」把被动消息
+        #   分成「回复用户 = msg_id」与「**响应事件 = event_id**」两类，互动事件属后者
+        #   → 改试 `event_id=` 等多种方式，看回调按钮能否直接产出消息。
+        if exp:
+            try:
+                from plugins.md_test import interaction as _md_itx
+                await _md_itx.handle(self.api, d, iid, resolved, exp)
+            except Exception as e:
+                _log.error("[webhook] 回调实验分发失败: %s", e)
 
     async def _on_group_message(self, d, at_event=False):
         content = (d.get("content") or "").strip()
