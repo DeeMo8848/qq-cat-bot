@@ -102,12 +102,25 @@ class Sender:
             self._reply_kwargs(message, reply, kwargs)
         return await self._send(scene, target, **kwargs)
 
-    async def send_markdown(self, message, markdown: str, reply=False):
-        """发送 markdown 富文本。注意：需要机器人在管理端具备 markdown 发送能力。"""
+    async def send_markdown(self, message, markdown: str, reply=False, keyboard=None):
+        """发送 markdown 富文本（msg_type=2）。
+
+        ★ 字段名必须是 markdown={"content": ...}：botpy 是把函数参数**原样当 JSON body**
+        发出去的（api.py 里 `payload = locals()`），所以旧写法 content= 平台根本不认
+        —— 会变成一条没有 markdown 结构的消息。
+
+        keyboard —— 可选的按钮配置 dict，形如 {"content": {"rows": [{"buttons": [...]}]}}。
+        官方规定「仅 markdown 消息支持消息按钮」，所以按钮只能挂在这里一起发。
+
+        注：2026/04/23 起群聊/单聊的自定义 markdown 已对全部机器人开放（无需申请）；
+        按钮则分「模板=申请」「自定义=内邀」两种获取途径，见官方「消息按钮」文档。
+        """
         scene, target = self.scene_of(message)
         if not scene:
             return None
-        kwargs = {"msg_type": 2, "content": markdown}
+        kwargs = {"msg_type": 2, "markdown": {"content": markdown}}
+        if keyboard:
+            kwargs["keyboard"] = keyboard
         if reply:
             self._reply_kwargs(message, reply, kwargs)
         return await self._send(scene, target, **kwargs)
