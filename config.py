@@ -75,6 +75,30 @@ MENU_KEYWORDS = _cfg("MENU_KEYWORDS", ["菜单", "帮助", "功能", "help"])
 WEBUI_PORT = int(_cfg("WEBUI_PORT", 9090))
 WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 
+# WebUI 访问密码。留空 = 不启用登录（默认），仅在绑定回环地址时安全；
+# 只要 WEBUI 暴露到公网（WEBUI_BIND=0.0.0.0 或经 nginx 反代公开），就必须设置，
+# 否则任何人都能开关插件、改配置、操作玩家数据，甚至关闭机器人。
+WEBUI_PASSWORD = _cfg("WEBUI_PASSWORD", "")
+
+# 高峰时段钱包保护（逻辑见 bot/core/peak_guard.py）：高峰时段禁用 AI、起止广播提醒。
+# 高峰=周一至周五（不含中国法定节假日）09:00-12:00 / 14:00-18:00；其余（含周末、
+# 节假日全天）空闲。节假日判定优先用 chinesecalendar 库（需 pip install chinesecalendar）。
+PEAK_GUARD_ENABLED = bool(_cfg("PEAK_GUARD_ENABLED", False))
+PEAK_GUARD_PERIODS = _cfg("PEAK_GUARD_PERIODS", "09:00-12:00,14:00-18:00")
+PEAK_GUARD_WEEKDAYS = _cfg("PEAK_GUARD_WEEKDAYS", "0,1,2,3,4")
+PEAK_REMINDER_ENABLED = bool(_cfg("PEAK_REMINDER_ENABLED", False))
+
+# ---- AI 对话增强（逻辑见 bot/ai/ai.py）----
+# 随机触发回复：群聊里没 @ 的消息也按概率偶尔回一句，增加趣味。默认关闭，需要时在
+# settings.json 打开并调概率。概率为 0~1 的浮点（0.05 ≈ 每 20 条闲聊回 1 条）；
+# 冷却秒数控制最短回复间隔，防止连珠炮刷屏。高峰时段随机回复仍会被钱包保护拦掉。
+AI_RANDOM_REPLY_ENABLED = bool(_cfg("AI_RANDOM_REPLY_ENABLED", False))
+AI_RANDOM_REPLY_PROBABILITY = float(_cfg("AI_RANDOM_REPLY_PROBABILITY", 0.05))
+AI_RANDOM_REPLY_COOLDOWN = int(_cfg("AI_RANDOM_REPLY_COOLDOWN", 300))
+# API 用量记录：每次 AI 调用追加一行到 logs/ai_usage.jsonl（时间/服务商/模型/token 数/来源），
+# 方便日后核对消耗都花在哪了。
+AI_USAGE_LOG_ENABLED = bool(_cfg("AI_USAGE_LOG_ENABLED", True))
+
 # 各 HTTP 服务的绑定地址。默认只绑回环（最安全）：
 #   本机开发 + 内网穿透场景，只有 cloudflared 需要访问它们，绑 127.0.0.1 就够。
 # 公网服务器上想直接用 http://<公网IP>:端口 访问，需改成 "0.0.0.0"
