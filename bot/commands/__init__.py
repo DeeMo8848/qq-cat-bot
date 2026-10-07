@@ -230,8 +230,10 @@ async def dispatch(ctx):
     for func in _COMMANDS:
         if not state.is_enabled(func.__name__):
             continue
-        if getattr(func, "exact", False):
-            continue  # 精确触发命令只走上面的 matcher，避免「· 抽猪」「我要抽猪」子串误触发
+        if getattr(func, "matcher", None) is not None:
+            # 有 matcher（含 exact=True 自动生成的）的命令以 matcher 为准，不再走子串兜底，
+            # 避免「哦还有附魔哦」「，内容不够，皮肤卖的贵，」这类闲聊被误触发
+            continue
         if not _role_ok(func, ctx.openid):
             continue
         if not _group_allowed(func, ctx):
@@ -292,3 +294,4 @@ from plugins import webtest  # noqa: E402,F401
 from plugins import cards  # noqa: E402,F401
 from plugins import selfupdate  # noqa: E402,F401
 from plugins import ops  # noqa: E402,F401
+from plugins import sv_card  # noqa: E402,F401
