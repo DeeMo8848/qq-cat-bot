@@ -30,6 +30,8 @@ _TMP_ROOT = os.path.join(ROOT, "tmp", "bili")
 MAX_VIDEO_MB = 100
 # 自动解析（检测到 BV 号）时的视频上限（MB）。QQ 视频超过 30MB 会降级成群文件无法直接点开看
 AUTO_VIDEO_MB = 30
+# 「仅下载音频」的时长上限（分钟）：超过则拒绝下载（超长音频文件群内体验差）
+MAX_AUDIO_MINUTES = 30
 
 BV_RE = re.compile(r"BV[0-9A-Za-z]{10}")
 
@@ -207,6 +209,41 @@ def _sync_bbdown_cookie():
         _log.warning("同步 BBDown cookie 失败: %s", e)
 
 
+def _parse_duration(text):
+    """从 BBDown 输出解析 P1 总时长（秒），解析失败返回 0。
+
+    P1 行形如「P1: [cid] [] [34m15s]」，时长括号是行里唯一含 h/m/s 的部分。
+    """
+    for line in text.splitlines():
+        if "P1:" not in line:
+            continue
+        for part in re.findall(r"\[([^\]]*)\]", line):
+            # 时长形如 34m15s / 1h2m3s / 59s / 2m：必须含 h/m/s 字母且只含数字和字母
+            if not any(ch in part for ch in "hms"):
+                continue
+            if not re.fullmatch(r"[\dhms]+", part):
+                continue
+            h = re.search(r"(\d+)h", part)
+            m = re.search(r"(\d+)m", part)
+            s = re.search(r"(\d+)s", part)
+            return (int(h.group(1)) if h else 0) * 3600 \
+                 + (int(m.group(1)) if m else 0) * 60 \
+                 + (int(s.group(1)) if s else 0)
+    return 0
+
+
+def _low_quality_mb(text):
+    """480P 流里最小的预估大小（MB）。自动解析按 hevc→av1→avc 选流，取最小更接近实际产物。"""
+    vals = []
+    for line in text.splitlines():
+        if "480P" not in line:
+            continue
+        m = re.search(r"\[~([\d.]+)\s*MB\]", line)
+        if m:
+            vals.append(float(m.group(1)))
+    return min(vals) if vals else 0.0
+
+
 async def _get_info(bv):
     """用 --only-show-info 获取视频信息，返回 dict 或 None。
 
@@ -235,12 +272,23 @@ async def _get_info(bv):
     if m:
         total += float(m.group(1))
     audio_part = text.split("音频流", 1)
+    audio_mb = 0.0
     if len(audio_part) > 1:
         m = re.search(r"\[~([\d.]+)\s*MB\]", audio_part[1])
         if m:
-            total += float(m.group(1))
+            audio_mb = float(m.group(1))
+            total += audio_mb
     if total:
         info["size_mb"] = total
+    if audio_mb:
+        info["audio_mb"] = audio_mb
+    # 供下载前预判：P1 总时长（秒）、低画质体积
+    duration = _parse_duration(text)
+    if duration:
+        info["duration_sec"] = duration
+    low = _low_quality_mb(text)
+    if low:
+        info["video_low_mb"] = low
     # 未登录也会打印标题（只是画质受限），单独识别出来供上层提示
     info["not_login"] = bbdown_login.MARK_NOT_LOGIN in text
     # B站风控（412）：单独标记，让上层给出可操作的指引而不是含糊的「解析失败」
@@ -343,6 +391,11 @@ async def _auto_parse(ctx, bv):
             await ctx.reply_text(result)
 
         # 3. 下载低画质视频（自动解析默认低画质，控制体积以便群里直接点开看）
+        #    先用解析信息预判体积，超限直接跳过下载（封面已发出）；预估值缺失时退回下载后校验
+        low = info.get("video_low_mb", 0) + info.get("audio_mb", 0)
+        if low and low > AUTO_VIDEO_MB:
+            await ctx.reply_text(f"吃撑了喵（视频预估 {low:.1f}MB，超过 {AUTO_VIDEO_MB:g}MB），睡大觉了喵")
+            return
         await ctx.reply_text("🐱吃饱了喵，正在生产猫屎咖啡…")
         video = await _download_video(bv, workdir, low_quality=True)
         if not video:
@@ -365,6 +418,30 @@ async def _auto_parse(ctx, bv):
 async def _download_and_send(ctx, bv, kind):
     labels = {"cover": "封面", "video": "视频", "audio": "音频"}
     await ctx.reply_text("保证完成任务喵！")
+
+    # 下载前预判：解析时就能拿到大小/时长，超限直接中断，避免下载大文件
+    # （解析失败时 info 为 None，退回下载后再校验的旧兜底，不误伤）
+    info = await _get_info(bv)
+    if kind == "audio" and info:
+        dur = info.get("duration_sec", 0)
+        if dur > MAX_AUDIO_MINUTES * 60:
+            await ctx.reply_text(
+                f"喵，音频时长 {dur // 60} 分钟，超过 {MAX_AUDIO_MINUTES} 分钟上限，睡大觉了喵"
+            )
+            return
+        audio_mb = info.get("audio_mb", 0)
+        if audio_mb > MAX_VIDEO_MB:
+            await ctx.reply_text(
+                f"喵，音频预估 {audio_mb:.1f}MB，超过 {MAX_VIDEO_MB:g}MB，睡大觉了喵"
+            )
+            return
+    elif kind == "video" and info:
+        size_mb = info.get("size_mb", 0)
+        if size_mb > MAX_VIDEO_MB:
+            await ctx.reply_text(
+                f"喵，视频预估 {size_mb:.1f}MB，超过 {MAX_VIDEO_MB:g}MB，睡大觉了喵"
+            )
+            return
 
     workdir = _fresh_workdir()
     try:

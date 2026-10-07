@@ -220,19 +220,23 @@ def signin_user(uid: str, username: str) -> dict:
     today = date.today().isoformat()
     user = data.get(uid)
     if not user:
-        user = {"name": username, "last_signin": "", "exp": 0, "signin_count": 0}
+        user = {"name": (username or "").strip() or f"用户{str(uid)[-4:]}",
+                "last_signin": "", "exp": 0, "signin_count": 0}
         data[uid] = user
     if user.get("last_signin") == today:
         return {"status": 1, "exp_gain": 0, "coin_gain": 0,
                 "today_coin": int(user.get("last_coin_gain", 0)),
                 "total_exp": int(user.get("exp", 0)),
-                "signin_count": int(user.get("signin_count", 0))}
+                "signin_count": int(user.get("signin_count", 0)),
+                "name": user.get("name", "")}
     luck = get_fortune(uid)
     exp_gain = random_with_luck(1, 100, luck)
     if random.random() < 0.02:      # 极低概率：1000-3000
         coin_gain = random.randint(1000, 3000)
     else:                            # 常规：0-1000
         coin_gain = random.randint(0, 1000)
+    # webhook 群消息不带昵称：拿不到实时昵称时沿用已存名字，避免把好名字覆盖成“用户XXXX”
+    username = (username or "").strip() or user.get("name") or f"用户{str(uid)[-4:]}"
     user["name"] = username
     user["last_signin"] = today
     user["exp"] = int(user.get("exp", 0)) + exp_gain
@@ -242,7 +246,8 @@ def signin_user(uid: str, username: str) -> dict:
     wallet.add(uid, coin_gain)
     return {"status": 0, "exp_gain": exp_gain, "coin_gain": coin_gain,
             "today_coin": coin_gain,
-            "total_exp": user["exp"], "signin_count": user["signin_count"]}
+            "total_exp": user["exp"], "signin_count": user["signin_count"],
+            "name": username}
 
 
 # ---------- 背景 / 寄语 ----------
@@ -319,6 +324,54 @@ def _load_font(size: int, bold: bool = False):
     """
     from bot.core.platform import load_cjk_font
     return load_cjk_font(size, bold=bold, project_root=ROOT)
+
+
+# 生僻字兜底字体：项目自带字体（qqbot-fonts.ttc）做过子集裁剪，个别生僻字（如「渵」）
+# 没有字形会渲染成空白，此时切到全字集字体（微软雅黑，覆盖 GBK 全部汉字）重绘该行。
+_FALLBACK_FONT_DIR = os.path.join(ROOT, "bot", "assets", "fonts")
+_FALLBACK_FONT_NAMES = {
+    True: ("msyhbd.ttc", "msyh.ttc"),
+    False: ("msyh.ttc", "msyhbd.ttc"),
+}
+_main_cmap_cache = None
+
+
+def _main_cmap() -> set | None:
+    """主字体（bold 时取 ttc 第 1 个 face，与 _load_font 一致）覆盖的字形集合；失败返回 None。"""
+    global _main_cmap_cache
+    if _main_cmap_cache is not None:
+        return _main_cmap_cache
+    cmap = None
+    try:
+        from fontTools.ttLib import TTCollection, TTFont
+        from bot.core.platform import find_cjk_font
+        p = find_cjk_font(ROOT)
+        if p:
+            fonts = TTCollection(p).fonts if p.lower().endswith((".ttc", ".otc")) else [TTFont(p)]
+            s = set()
+            for f in fonts:
+                s |= set(f.getBestCmap().keys())
+            cmap = s
+    except Exception:
+        cmap = None
+    _main_cmap_cache = cmap
+    return cmap
+
+
+def _name_font(size: int, bold: bool, text: str):
+    """昵称用字体：若文本含主字体缺失的生僻字，切到全字集兜底字体。"""
+    if text:
+        cmap = _main_cmap()
+        if cmap is not None and any(ord(c) not in cmap for c in text):
+            from PIL import ImageFont
+            for cand in _FALLBACK_FONT_NAMES[bold]:
+                fp = os.path.join(_FALLBACK_FONT_DIR, cand)
+                if os.path.isfile(fp):
+                    try:
+                        return ImageFont.truetype(fp, size)
+                    except Exception:
+                        continue
+    return _load_font(size, bold=bold)
 
 
 def _shorten(s: str, limit: int) -> str:
@@ -398,7 +451,7 @@ def render_card(view: dict) -> str:
     # 标题：问候 + 用户名
     title_f = _load_font(32, bold=True)
     draw.text((x0, y), view["greeting"], font=title_f, fill=black)
-    name_f = _load_font(32, bold=True)
+    name_f = _name_font(32, True, view["username"])
     draw.text((x0 + 40, y + 34), f"{view['username']}", font=name_f, fill=black)
     # 日期（右上）
     date_f = _load_font(22, bold=True)
@@ -473,29 +526,42 @@ def _jrys_matcher(t):
 
 
 def _sender_name(ctx) -> str:
-    """取发送者 QQ 昵称。群聊昵称存放位置与 botpy 官方一致：作者（author）的 username 字段。"""
-    author = getattr(ctx.message, "author", None)
+    """取发送者 QQ 昵称。
+
+    群聊昵称存放位置与 botpy 官方一致：作者（author）的 username 字段；
+    webhook 群消息 author 通常为空，此时从 mentions（携带 username）里按 openid 匹配找回。
+    """
+    msg = getattr(ctx, "message", None)
+    author = getattr(msg, "author", None)
     if isinstance(author, dict):
         for k in ("username", "member_name", "user_name", "nickname"):
             v = author.get(k)
             if v:
                 return str(v).strip()
-        return ""
-    try:
-        name = getattr(author, "username", None) or getattr(author, "member_name", None) \
-            or getattr(author, "user_name", None) or getattr(author, "nickname", None)
-    except Exception:
-        name = None
-    return (name or "").strip()
+    else:
+        try:
+            name = getattr(author, "username", None) or getattr(author, "member_name", None) \
+                or getattr(author, "user_name", None) or getattr(author, "nickname", None)
+            if name:
+                return str(name).strip()
+        except Exception:
+            pass
+    oid = getattr(ctx, "openid", "") or ""
+    for m in getattr(msg, "mentions", None) or []:
+        if isinstance(m, dict) and (m.get("id") == oid or m.get("member_openid") == oid):
+            v = m.get("username")
+            if v:
+                return str(v).strip()
+    return ""
 
 
 @register(keywords=["今日运势", "运势", "今日签运"], help="今日运势签到喵", matcher=_jrys_matcher, role=ROLE_ALL, exact=True)
 async def cmd_jrys(ctx):
     uid = ctx.openid or "anonymous"
-    username = _sender_name(ctx) or f"用户{uid[-4:]}"
+    raw_name = _sender_name(ctx)
 
     async def _run():
-        signin = signin_user(uid, username)
+        signin = signin_user(uid, raw_name)
         if signin["status"] == 1:
             return await ctx.reply_text("今天签过到了喵，明天再来吧~")
         luck = get_fortune(uid)
@@ -510,9 +576,10 @@ async def cmd_jrys(ctx):
 
         events = get_random_events(uid)
         now = datetime.now()
+        name = signin.get("name") or raw_name or f"用户{str(uid)[-4:]}"
         view = {
             "greeting": _greeting(now.hour),
-            "username": _shorten(username, 12),
+            "username": _shorten(name, 12),
             "date": f"{now.month:02d}/{now.day:02d}",
             "status_text": status_text,
             "level_name": level["levelName"],

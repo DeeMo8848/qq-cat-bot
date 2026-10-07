@@ -358,7 +358,7 @@ def _resolve_market_card(text):
 
 # ---------- 命令 ----------
 
-@register(keywords=["制作卡牌", "卡牌帮助"], help="🃏 卡牌 DIY：查看制作教程喵", role=ROLE_ALL)
+@register(keywords=["制作卡牌", "卡牌帮助"], help="🃏 卡牌 DIY：查看制作教程喵", role=ROLE_ALL, exact=True)
 async def cmd_card_help(ctx):
     cost = _make_cost()
     await ctx.reply(
@@ -509,14 +509,14 @@ async def cmd_card_make(ctx):
     await ctx.reply(hint)
 
 
-@register(keywords=["收集册"], help="🃏 打开我的卡牌收集册网页", role=ROLE_ALL)
+@register(keywords=["收集册"], help="🃏 打开我的卡牌收集册网页", role=ROLE_ALL, exact=True)
 async def cmd_album(ctx):
     rec = cd.album(ctx.openid, _nick_of(ctx.message))
     n = cd.card_count(ctx.openid)
     await ctx.reply(f"📖 我的收集册（共 {n} 张）\n{STATIC_PUBLIC_URL}/album/{rec['key']}")
 
 
-@register(keywords=["我的卡牌"], help="🃏 文本列出我持有的卡牌", role=ROLE_ALL)
+@register(keywords=["我的卡牌"], help="🃏 文本列出我持有的卡牌", role=ROLE_ALL, exact=True)
 async def cmd_my_cards(ctx):
     cards = cd.list_owned(ctx.openid)
     if not cards:
@@ -541,7 +541,7 @@ async def cmd_destroy_card(ctx):
     await ctx.reply(f"卡牌「{c['name']}」已销毁，无补偿喵")
 
 
-@register(keywords=["卡牌市场"], help="🃏 卡牌商店网页（市场 + 素材分页预览）", role=ROLE_ALL)
+@register(keywords=["卡牌市场"], help="🃏 卡牌商店网页（市场 + 素材分页预览）", role=ROLE_ALL, exact=True)
 async def cmd_card_market(ctx):
     n = len(cd.list_market())
     await ctx.reply(f"🏪 卡牌商店（市场 {n} 个挂单）\n{STATIC_PUBLIC_URL}/market\n"
@@ -598,7 +598,7 @@ async def cmd_buy_card(ctx):
         f"{STATIC_PUBLIC_URL}/album/{rec['key']}")
 
 
-@register(keywords=["素材包"], help="🎨 查看卡牌素材包清单", role=ROLE_ALL)
+@register(keywords=["素材包"], help="🎨 查看卡牌素材包清单", role=ROLE_ALL, exact=True)
 async def cmd_materials(ctx):
     prices = _prices()
     owned = cd.own_materials(ctx.openid)

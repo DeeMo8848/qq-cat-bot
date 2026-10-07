@@ -36,10 +36,24 @@ _BROWSER_HDRS = {
 }
 
 
+def _username_char(c):
+    """MC 正版用户名只允许 [a-zA-Z0-9_]，可作为「皮肤」后的玩家名首字符。"""
+    return c.isascii() and (c.isalnum() or c == "_")
+
+
 def _matcher(t):
-    """宽松匹配：以「皮肤」开头的消息触发（需要跟玩家名参数或引用图片）。"""
-    t = (t or "").strip().lower()
-    return t.startswith("皮肤") and len(t) > 2
+    """「皮肤」前缀触发：后跟结尾/空白/@/玩家名首字符才命中。
+
+    裸「皮肤」（配引用贴图）也算；「皮肤卖的贵」这类闲聊因下一个字符
+    不是合法玩家名首字符而不会误触发。
+    """
+    t = (t or "").strip()
+    if not t.startswith("皮肤"):
+        return False
+    rest = t[len("皮肤"):]
+    if not rest:
+        return True
+    return rest[0].isspace() or rest[0] in "@<" or _username_char(rest[0])
 
 
 async def _uuid_of(username):
@@ -414,9 +428,15 @@ async def cmd_mcskin(ctx):
 
 
 def _matcher_dl(t):
-    """「下载皮肤」精确前缀触发（需要跟玩家名）。"""
-    t = (t or "").strip().lower()
-    return t.startswith("下载皮肤") and len(t) > 4
+    """「下载皮肤」前缀触发：后跟结尾/空白/玩家名首字符才命中，
+    避免「下载皮肤怎么样」这类闲聊误触发。"""
+    t = (t or "").strip()
+    if not t.startswith("下载皮肤"):
+        return False
+    rest = t[len("下载皮肤"):]
+    if not rest:
+        return True
+    return rest[0].isspace() or rest[0] in "@<" or _username_char(rest[0])
 
 
 @register(keywords=["下载皮肤"], help="下载皮肤 <玩家名>：获取该玩家的原版皮肤贴图文件喵", matcher=_matcher_dl, role=ROLE_ALL)

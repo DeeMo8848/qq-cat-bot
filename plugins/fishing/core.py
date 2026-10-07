@@ -26,6 +26,9 @@ _DATA_FILE = os.path.join(_DATA_DIR, "fishing_data.json")
 os.makedirs(_DATA_DIR, exist_ok=True)
 _lock = threading.Lock()
 
+# 渔具店价格表图片：发「渔具店」优先发图，避免长文本刷屏；发送失败时回退文本价格表
+SHOP_IMAGE = os.path.join(ROOT, "bot", "assets", "fishing", "渔具店界面.png")
+
 _RARITY_CN = game.RARITIES
 _RARITY_EMOJI = {
     "common": "⚪", "rare": "🟢", "epic": "🟣", "legend": "🔴", "myth": "🟡",
@@ -309,7 +312,11 @@ async def cmd_fish(ctx):
     if info.get("jackpot"):
         lines.append(f"🎉 集齐全部鱼种！大奖 +{JACKPOT_REWARD} 喵币！")
     lines += [f"🏅 达成成就「{n}」+{r}喵币！" for n, r in new_ach]
-    return await ctx.reply_text("\n".join(lines))
+    text = "\n".join(lines)
+    img = _fish_image(fish["id"], fish.get("gold", False))
+    if img:
+        return await ctx.sender.send_image_with_text(ctx.message, text, img)
+    return await ctx.reply_text(text)
 
 
 @register(keywords=["我的鱼获", "鱼获"], help="🎒 查看钓到的鱼", role=ROLE_ALL, exact=True)
@@ -371,6 +378,14 @@ async def cmd_balance(ctx):
 @register(keywords=["鱼具店", "渔具店"], help="🏪 钓竿与鱼饵价格表",
           role=ROLE_ALL, exact=True)
 async def cmd_shop(ctx):
+    # 优先发价格表图片（图片内已含各商品价格与买法说明），失败再回退文本
+    try:
+        if os.path.isfile(SHOP_IMAGE):
+            sent = await ctx.sender.send_local_file(ctx.message, 1, SHOP_IMAGE, reply=False)
+            if not isinstance(sent, str):
+                return
+    except Exception:
+        pass
     def _gear_lines(gears):
         lines = []
         for lv in sorted(gears):
@@ -425,6 +440,22 @@ async def cmd_shop(ctx):
 def _starts_with(*kws):
     kws = set(kws)
     return lambda text: any(text.startswith(k) for k in kws)
+
+
+def _gear_part(kw):
+    """「附魔/洗附魔」触发：命令词后只接受 结尾/空白/钓竿|鱼漂（含别称）。
+
+    否则「附魔书」「附魔哦」这类闲聊会被误触发成游戏命令。
+    """
+    def m(text):
+        t = (text or "").strip()
+        if not t.startswith(kw):
+            return False
+        rest = t[len(kw):]
+        if not rest or rest[0].isspace():
+            return True
+        return rest.startswith(("钓竿", "鱼竿", "鱼漂", "浮漂"))
+    return m
 
 
 def _strip_cmd(ctx, *kws):
@@ -567,7 +598,7 @@ async def cmd_equip(ctx):
     return await ctx.reply_text("\n".join(lines))
 
 
-@register(keywords=["附魔"], help="", role=ROLE_ALL, matcher=_starts_with("附魔"))
+@register(keywords=["附魔"], help="", role=ROLE_ALL, matcher=_gear_part("附魔"))
 async def cmd_enchant(ctx):
     parts = _strip_cmd(ctx, "附魔").split()
     if len(parts) != 1:
@@ -601,7 +632,7 @@ async def cmd_enchant(ctx):
     return await ctx.reply_text("\n".join(lines))
 
 
-@register(keywords=["洗附魔"], help="", role=ROLE_ALL, matcher=_starts_with("洗附魔"))
+@register(keywords=["洗附魔"], help="", role=ROLE_ALL, matcher=_gear_part("洗附魔"))
 async def cmd_unenchant(ctx):
     parts = _strip_cmd(ctx, "洗附魔").split()
     if len(parts) != 1:

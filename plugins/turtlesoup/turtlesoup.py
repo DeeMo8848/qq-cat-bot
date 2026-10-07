@@ -19,6 +19,12 @@ import time
 from config import _cfg
 from bot.commands import register, ROLE_ALL
 
+
+def _prefix(*kws):
+    """规则预设：消息以任一触发词开头（如「开始海龟汤 1」「海龟汤提问 为什么」）。"""
+    kws = tuple(kws)
+    return lambda text: (text or "").strip().startswith(kws)
+
 # 供 Web 后台「游戏娱乐 → 海龟汤」插件总开关使用的命令名集合
 TURTLE_CMD_NAMES = {
     "cmd_turtle_start", "cmd_turtle_question", "cmd_turtle_list",
@@ -139,14 +145,14 @@ def _end_text(title, q, a, m, q_count=None):
 
 
 # ---------- 命令入口 ----------
-@register(keywords=["开始海龟汤"], help="海龟汤推理小游戏喵", role=ROLE_ALL)
+@register(keywords=["开始海龟汤"], help="海龟汤推理小游戏喵", role=ROLE_ALL, matcher=_prefix("开始海龟汤"))
 async def cmd_turtle_start(ctx):
     s = SESSIONS.get(ctx.openid)
     if s and time.time() <= s["expires"] and s["scene"] == ctx.scene and s["target"] == ctx.target:
         await ctx.reply("你已有一个进行中的海龟汤游戏喵，先发 `结束海龟汤` 结束它~")
         return
 
-    parts = ctx.args.split() if ctx.args else []
+    parts = _strip_prefix(ctx.args or "", "开始海龟汤").split()
     qid = None
     if len(parts) > 0:
         raw = parts[0].replace("开始海龟汤", "").strip()
@@ -171,7 +177,7 @@ async def cmd_turtle_start(ctx):
     await ctx.reply(_intro_text(q, a, m))
 
 
-@register(keywords=["海龟汤提问"], help="海龟汤中提问喵", role=ROLE_ALL)
+@register(keywords=["海龟汤提问"], help="海龟汤中提问喵", role=ROLE_ALL, matcher=_prefix("海龟汤提问"))
 async def cmd_turtle_question(ctx):
     s = SESSIONS.get(ctx.openid)
     if not s or time.time() > s["expires"] or s["scene"] != ctx.scene or s["target"] != ctx.target:
@@ -180,13 +186,13 @@ async def cmd_turtle_question(ctx):
     await _handle_turn(ctx, s, _strip_prefix(ctx.args or "", "海龟汤提问"))
 
 
-@register(keywords=["题库列表"], help="查看海龟汤题库喵", role=ROLE_ALL)
+@register(keywords=["题库列表"], help="查看海龟汤题库喵", role=ROLE_ALL, matcher=_prefix("题库列表"))
 async def cmd_turtle_list(ctx):
     if not _BANK:
         await ctx.reply("题库为空喵~")
         return
     page = 1
-    parts = ctx.args.split() if ctx.args else []
+    parts = _strip_prefix(ctx.args or "", "题库列表").split()
     if parts and parts[-1].isdigit():
         page = max(1, int(parts[-1]))
     per = 10
@@ -207,9 +213,9 @@ async def cmd_turtle_list(ctx):
     await ctx.reply("\n\n".join(lines))
 
 
-@register(keywords=["题目详情"], help="查看海龟汤题目详情喵", role=ROLE_ALL)
+@register(keywords=["题目详情"], help="查看海龟汤题目详情喵", role=ROLE_ALL, matcher=_prefix("题目详情"))
 async def cmd_turtle_detail(ctx):
-    parts = ctx.args.split() if ctx.args else []
+    parts = _strip_prefix(ctx.args or "", "题目详情").split()
     if not parts or not parts[0].isdigit():
         await ctx.reply("请指定题号喵，例如 `题目详情 1`")
         return
@@ -225,7 +231,7 @@ async def cmd_turtle_detail(ctx):
     await ctx.reply("未找到题号 %s 的题目喵~" % parts[0])
 
 
-@register(keywords=["海龟汤帮助"], help="海龟汤玩法说明喵", role=ROLE_ALL)
+@register(keywords=["海龟汤帮助"], help="海龟汤玩法说明喵", role=ROLE_ALL, exact=True)
 async def cmd_turtle_help(ctx):
     await ctx.reply(
         "🐢 海龟汤推理游戏\n\n"
@@ -244,7 +250,7 @@ async def cmd_turtle_help(ctx):
 
 # ---------- 无进行中游戏时给提示的“结束类”命令 ----------
 @register(keywords=["结束海龟汤", "强制结束海龟汤", "公布答案", "换一题"],
-          help="", role=ROLE_ALL, exact=False)
+          help="", role=ROLE_ALL, exact=True)
 async def cmd_turtle_ctrl(ctx):
     await ctx.reply("当前没有正在进行的海龟汤游戏喵~")
 

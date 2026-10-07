@@ -4,6 +4,6 @@
 from bot.commands import register, ROLE_ADMIN
 
 
-@register(keywords=["你好", "你好呀", "在吗", "hi", "hello", "ping"], help="打个招呼，确认我还活着", role=ROLE_ADMIN)
+@register(keywords=["你好", "你好呀", "在吗", "hi", "hello", "ping"], help="打个招呼，确认我还活着", role=ROLE_ADMIN, exact=True)
 async def cmd_hello(ctx):
     await ctx.reply("活着呢")

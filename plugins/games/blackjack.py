@@ -331,12 +331,12 @@ def _need_group(ctx):
     return False
 
 
-@register(keywords=["21点帮助", "21点规则"], help="21点规则说明喵", role=ROLE_ALL)
+@register(keywords=["21点帮助", "21点规则"], help="21点规则说明喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_help(ctx):
     await ctx.reply_text(_RULES_TEXT)
 
 
-@register(keywords=["创建21点", "开21点"], help="创建21点房间喵", role=ROLE_ALL)
+@register(keywords=["创建21点", "开21点"], help="创建21点房间喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_open(ctx):
     if _need_group(ctx):
         await ctx.reply_text("21点只能在群里玩。")
@@ -361,7 +361,7 @@ async def cmd_bj_open(ctx):
     )
 
 
-@register(keywords=["加入21点"], help="加入21点房间喵", role=ROLE_ALL)
+@register(keywords=["加入21点"], help="加入21点房间喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_join(ctx):
     if _need_group(ctx):
         await ctx.reply_text("21点只能在群里玩。")
@@ -383,7 +383,7 @@ async def cmd_bj_join(ctx):
     await ctx.reply_text(f"✅ {_name(uid)} 已加入！\n\n" + _room_text(room))
 
 
-@register(keywords=["开始21点"], help="管理员开局21点喵", role=ROLE_ALL)
+@register(keywords=["开始21点"], help="管理员开局21点喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_deal(ctx):
     if _need_group(ctx):
         await ctx.reply_text("21点只能在群里玩。")
@@ -425,7 +425,7 @@ async def cmd_bj_deal(ctx):
     )
 
 
-@register(keywords=["要牌"], help="21点要牌喵", role=ROLE_ALL)
+@register(keywords=["要牌"], help="21点要牌喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_hit(ctx):
     room = _ROOMS.get(ctx.target or "")
     if not room or room.phase != "playing":
@@ -450,7 +450,7 @@ async def cmd_bj_hit(ctx):
     await ctx.reply_text(await _after_choice(room, f"📝 {_name(uid)} 本轮选择：要牌（等全员选完再发）"))
 
 
-@register(keywords=["停牌", "停手"], help="21点停牌喵", role=ROLE_ALL)
+@register(keywords=["停牌", "停手"], help="21点停牌喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_stand(ctx):
     room = _ROOMS.get(ctx.target or "")
     if not room or room.phase != "playing":
@@ -472,7 +472,7 @@ async def cmd_bj_stand(ctx):
     await ctx.reply_text(await _after_choice(room, f"📝 {_name(uid)} 本轮选择：停手（确认后本局不能再要）"))
 
 
-@register(keywords=["21点状态"], help="查看21点房间状态喵", role=ROLE_ALL)
+@register(keywords=["21点状态"], help="查看21点房间状态喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_status(ctx):
     room = _ROOMS.get(ctx.target or "")
     if not room:
@@ -481,7 +481,7 @@ async def cmd_bj_status(ctx):
     await ctx.reply_text(_room_text(room))
 
 
-@register(keywords=["结束21点"], help="结束21点房间喵", role=ROLE_ALL)
+@register(keywords=["结束21点"], help="结束21点房间喵", role=ROLE_ALL, exact=True)
 async def cmd_bj_end(ctx):
     room = _ROOMS.get(ctx.target or "")
     if not room:

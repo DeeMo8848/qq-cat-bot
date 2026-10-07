@@ -89,11 +89,36 @@ def is_meme(text: str) -> bool:
     return _match_meme(text) is not None
 
 
+def _meme_prefix_ok(t):
+    """「meme」前缀检查：meme 后只能跟空白、@、已知子命令或表情关键词。
+
+    否则「meme默认全部也是模糊匹配」这类闲聊会被「meme」前缀误触发。
+    """
+    m = _CMD.match(t)
+    if not m:
+        return False
+    rest = t[m.end():].strip()
+    if not rest or rest[0] in "@<":
+        return True
+    rl = rest.lower()
+    if rl.startswith(("列表", "list", "搜索", "更新", "update", "刷新", "refresh")):
+        return True
+    return _match_meme(rest) is not None
+
+
+def _random_meme_ok(t):
+    """「随机meme」后只接受空白/结尾，避免「随机meme默认…」误触发。"""
+    m = _RANDOM_CMD.match(t)
+    if not m:
+        return False
+    return (t[m.end():].strip() == "")
+
+
 def _matcher(text):
     t = (text or "").strip()
-    if _RANDOM_CMD.match(t):
+    if _random_meme_ok(t):
         return True
-    if _CMD.match(t):
+    if _meme_prefix_ok(t):
         return True
     return _match_meme(t) is not None
 
