@@ -152,10 +152,16 @@ async def main():
     st_runner, st_site = await start_static()
     print(f"  [OK] 静态页面服务已启动，公网地址: {STATIC_PUBLIC_URL}")
 
+    # 高峰时段钱包保护：后台提醒协程（高峰起/止向最近活跃的群广播）
+    from bot.core import peak_guard as _peak
+    _peak_task = _peak.start_reminder_loop(bot.api)
+    print(f"  [OK] 高峰时段提醒已启动（当前状态: {_peak.current_status()['period']}）")
+
     try:
         # 启动机器人（失败自动重试，Web 后台保持运行）
         await run_bot_forever(bot)
     finally:
+        _peak_task.cancel()
         await st_runner.cleanup()
         await wh_runner.cleanup()
         await runner.cleanup()
