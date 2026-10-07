@@ -5,6 +5,8 @@
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -16,7 +18,7 @@ from bot import commands
 from plugins import randomimg
 from bot.core import state
 from bot.ai import ai as ai_mod
-from config import WEBUI_PORT, ROOT, WEBUI_BIND, _display_host
+from config import WEBUI_PORT, ROOT, WEBUI_BIND, WEBUI_PASSWORD, _display_host
 
 # 公网 IP 查询源（按顺序尝试；国内源在前，开代理/VPN 时比国际源稳得多）
 _IP_PROVIDERS = [
@@ -57,6 +59,7 @@ def _module_groups():
     from plugins.jrys import JRESY_CMD_NAMES
     from plugins.words import WORD_CMD_NAMES
     from plugins.cards import CARD_CMD_NAMES
+    from plugins.sv_card import SV_CMD_NAMES
 
     other_plugins = [
         ("search_img", "搜图", SEARCH_CMD_NAMES, SEARCH_GROUPS),
@@ -68,6 +71,7 @@ def _module_groups():
         ("netease_music", "网易云点歌", NCM_CMD_NAMES, []),
         ("jrys", "今日运势签到", JRESY_CMD_NAMES, []),
         ("random_words", "随机一言/名言/诗词", WORD_CMD_NAMES, []),
+        ("sv_card", "影之诗制卡器", SV_CMD_NAMES, []),
         # 「下载图片 / 下载表情」归入「其他功能」
         ("download_image", "下载图片/表情", ["cmd_download_image"], []),
     ]
@@ -169,13 +173,53 @@ class WebUI:
         self.app.router.add_post("/api/admin/fishing/reset", self.admin_fishing_reset)
         self.app.router.add_get("/api/admin/users", self.admin_users)
         self.app.router.add_post("/api/admin/users/balance", self.admin_users_balance)
+        self.app.router.add_post("/api/admin/users/nick", self.admin_users_set_nick)
         self.app.router.add_post("/api/admin/users/reset_fishing", self.admin_users_reset_fishing)
         # 随机一图预览代理（供独立预览网页按 source 取一张图）
         self.app.router.add_get("/api/randomimg/preview", self.randomimg_preview)
+        # WebUI 登录（受密码保护的首要入口，放最后注册无影响）
+        self.app.router.add_post("/api/login", self.login)
+        self.app.middlewares.append(self._auth_middleware)
         self.app.middlewares.append(self._bind_guard)
         self._ip = None
         self._ip_time = 0.0
         self._ip_error_time = 0.0
+
+    # 不拦截的路由：页面本身 + 登录接口。其余全部要求有效登录 Cookie。
+    _OPEN_PATHS = {"/", "/api/login"}
+
+    @staticmethod
+    def _auth_hex() -> str:
+        """由密码派生的登录令牌（HMAC），避免把明文密码放进 Cookie。"""
+        return hmac.new(b"trae-webui", WEBUI_PASSWORD.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    @web.middleware
+    async def _auth_middleware(self, request, handler):
+        """WebUI 密码鉴权：WEBUI_PASSWORD 为空时放行（保持旧行为并打印告警）；
+        设置后未登录请求一律 401，前端据此弹出登录框。
+        """
+        if not WEBUI_PASSWORD:
+            return await handler(request)
+        if request.path in WebUI._OPEN_PATHS:
+            return await handler(request)
+        token = request.cookies.get("auth_token")
+        if token != WebUI._auth_hex():
+            return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+        return await handler(request)
+
+    async def login(self, request):
+        """登录：校验密码，成功则种下 auth_token Cookie。"""
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        pwd = data.get("password", "")
+        if WEBUI_PASSWORD and pwd == WEBUI_PASSWORD:
+            resp = web.json_response({"ok": True})
+            resp.set_cookie("auth_token", WebUI._auth_hex(), max_age=7 * 86400,
+                            httponly=True, samesite="Lax")
+            return resp
+        return web.json_response({"ok": False, "msg": "密码错误"})
 
     @web.middleware
     async def _bind_guard(self, request, handler):
@@ -188,9 +232,12 @@ class WebUI:
             WebUI._warned = True
             print("=" * 60)
             print("[安全警告] WebUI 绑定在 %s，已对外网开放！" % WEBUI_BIND)
-            print("           后台【没有任何身份验证】，任何能访问该端口的人")
-            print("           都可以开关插件、改配置、操作玩家数据、关闭机器人。")
-            print("           请确认云安全组已限制来源 IP，或改用隧道访问。")
+            if not WEBUI_PASSWORD:
+                print("           且【未设置访问密码】，任何能访问该端口的人都可以")
+                print("           开关插件、改配置、操作玩家数据、关闭机器人。")
+                print("           请在 settings.json 中设置 WEBUI_PASSWORD 后再暴露公网！")
+            else:
+                print("           已启用密码登录（WEBUI_PASSWORD），请确保使用强密码。")
             print("=" * 60)
         return await handler(request)
 
@@ -280,16 +327,12 @@ class WebUI:
             "sub": [_plugin_switch(k, t, ns, []) for k, t, ns in TEST_PLUGINS],
         })
         robot = getattr(self.bot, "robot", None)
-        tunnel_url = self.tunnel.get_url() if self.tunnel else None
-        tunnel_running = self.tunnel.is_running() if self.tunnel else False
         return web.json_response({
             "online": bool(getattr(self.bot, "online", False)),
             "bot_name": getattr(robot, "name", "-"),
             "bot_id": getattr(robot, "id", "-"),
             "last_ready": getattr(self.bot, "last_ready", None),
             "ip": ip,
-            "tunnel_url": tunnel_url,
-            "tunnel_running": tunnel_running,
             "commands": commands_list,
             "recent_groups": state.get_recent_groups(),
             "bilibili_mode": state.get_bilibili_mode(),
@@ -578,6 +621,16 @@ class WebUI:
         albums = cwhole.get("albums") or {}
         cards = cwhole.get("cards") or {}
         materials = cwhole.get("materials") or {}
+        # 昵称兜底：收集册没有时退回今日运势已存的名字（webhook 群消息不带昵称，靠这里补）
+        jrys_names = {}
+        jp = os.path.join(ROOT, "data", "jrys", "jrys_data.json")
+        if os.path.exists(jp):
+            try:
+                with open(jp, "r", encoding="utf-8") as f:
+                    jwhole = json.load(f) or {}
+                jrys_names = {k: (v or {}).get("name", "") for k, v in jwhole.items()}
+            except Exception:
+                jrys_names = {}
 
         openids = set(balances) | set(fusers) | set(albums)
         out = []
@@ -593,7 +646,7 @@ class WebUI:
             out.append({
                 "openid": oid,
                 "balance": balances.get(oid, 0),
-                "nick": albums.get(oid, {}).get("nick", ""),
+                "nick": albums.get(oid, {}).get("nick", "") or jrys_names.get(oid, ""),
                 "fishing": {
                     "rod": u.get("rod", 1), "hook": u.get("hook", 1),
                     "line": u.get("line", 1), "float": u.get("float", 1),
@@ -629,6 +682,16 @@ class WebUI:
         except (TypeError, ValueError):
             return web.json_response({"ok": False, "msg": "金额格式错误"}, status=400)
         return web.json_response({"ok": True, "balance": bal})
+
+    async def admin_users_set_nick(self, request):
+        from plugins.cards import carddata as cd
+        data = await request.json() or {}
+        oid = (data.get("openid") or "").strip()
+        if not oid:
+            return web.json_response({"ok": False, "msg": "缺少 openid"}, status=400)
+        nick = (data.get("nick") or "").strip()[:20]
+        cd.album(oid, nick or None)
+        return web.json_response({"ok": True, "nick": nick})
 
     async def admin_users_reset_fishing(self, request):
         from plugins.fishing import core as fcore
@@ -747,6 +810,15 @@ PAGE_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<div id="login-mask" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:30px 34px;width:320px;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <h2 style="font-size:18px;margin-bottom:6px">🔒 需要验证</h2>
+    <div style="font-size:13px;color:#888;margin-bottom:16px">请输入 WebUI 访问密码</div>
+    <input id="login-pwd" type="password" placeholder="密码" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #d1d5db;font-size:14px" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="login-msg" style="color:#ef4444;font-size:12px;height:18px;margin-top:8px"></div>
+    <button onclick="doLogin()" style="width:100%;padding:10px 0;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:15px;cursor:pointer;margin-top:6px">登 录</button>
+  </div>
+</div>
 <div class="wrap">
   <div class="tabs">
     <button class="tab active" data-tab="overview" onclick="showTab('overview')">📋 概览</button>
@@ -773,13 +845,6 @@ PAGE_HTML = """<!DOCTYPE html>
       <h2>网络</h2>
       <div>当前公网 IP：<b id="cur-ip">-</b></div>
       <div class="tip">如需开启白名单可自行在官方机器人后台添加此 IP</div>
-    </div>
-    <div class="card">
-      <h2>内网穿透 / 回调地址</h2>
-      <div>隧道状态：<b id="tunnel-status">检测中…</b></div>
-      <div style="margin-top:6px;word-break:break-all">回调地址：<b id="tunnel-url">-</b></div>
-      <div style="margin-top:8px"><button onclick="copyUrl()" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer">复制地址</button></div>
-      <div class="tip">隧道进程保持运行时地址不变；重启 bot 不会影响地址。仅当 cloudflared 进程被关闭后重新启动时，地址才会变化，需同步更新开放平台回调配置</div>
     </div>
   </div>
 
@@ -852,6 +917,20 @@ PAGE_HTML = """<!DOCTYPE html>
       <b style="font-size:13px">账户余额</b>
       <span id="ai-bal">-</span>
       <button onclick="loadBalance()" style="font-size:12px;padding:4px 10px;border:none;border-radius:6px;background:#e5e7eb;cursor:pointer">刷新余额</button>
+    </div>
+    <div style="margin-top:12px;border-top:1px solid #f1f1f1;padding-top:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <b style="font-size:13px">随机回复（群里没 @ 时按概率偶尔回一句）</b>
+        <label class="switch" style="vertical-align:middle;display:inline-block;width:38px;height:20px">
+          <input type="checkbox" id="rr-enabled"><span class="slider" style="height:20px"></span>
+        </label>
+        <span id="rr-enable-label" style="font-size:12px;color:#888"></span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:8px">
+        <div><div class="help">触发概率（%，0=关闭）</div><input type="number" id="rr-probability" min="0" max="100" step="1" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
+        <div><div class="help">冷却（分钟，期间最多回 1 条）</div><input type="number" id="rr-cooldown-min" min="0" step="1" style="width:100%;padding:6px;border-radius:6px;border:1px solid #d1d5db"></div>
+      </div>
+      <div class="tip" style="margin-top:6px">概率 5% ≈ 每 20 条闲聊回 1 条；高峰时段随机回复会被钱包保护拦掉</div>
     </div>
     <div style="margin-top:12px;border-top:1px solid #f1f1f1;padding-top:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1037,10 +1116,6 @@ async function refresh(){
     document.getElementById('bot-id').textContent = d.bot_id;
     document.getElementById('bot-ready').textContent = d.last_ready || '-';
     document.getElementById('cur-ip').textContent = d.ip;
-    const tst = document.getElementById('tunnel-status');
-    if(d.tunnel_running){ tst.innerHTML = '<span class="ip-ok">● 运行中</span>'; }
-    else { tst.innerHTML = '<span class="ip-bad">○ 未运行</span>'; }
-    document.getElementById('tunnel-url').textContent = d.tunnel_url || '获取中…';
     const list = document.getElementById('cmd-list');
     list.innerHTML = d.commands.map(c => {
       const gr = c.group_rule || {};
@@ -1233,16 +1308,6 @@ async function doShutdown(){
   }catch(e){}
   setTimeout(()=>{ btn.textContent = '已关闭，页面即将断开'; }, 1500);
 }
-async function copyUrl(){
-  const url = document.getElementById('tunnel-url').textContent;
-  if(!url || url === '获取中…'){ alert('地址还没获取到，稍等几秒再试'); return; }
-  try{
-    await navigator.clipboard.writeText(url);
-    alert('已复制: ' + url);
-  }catch(e){
-    alert('复制失败，请手动复制: ' + url);
-  }
-}
 // ---------- AI 对话配置 ----------
 // 服务商元数据（启动时从 /api/ai/providers 拉取，用于动态渲染下拉与默认值）
 let AI_PROVIDERS = [];
@@ -1308,6 +1373,11 @@ async function loadAi(){
     setNum('ai-maxtokens', d.max_tokens, 0);
     setNum('ai-timeout', d.timeout, 90);
     document.getElementById('ai-enable-label').textContent = d.enabled ? '● 已启用（@机器人 或私聊触发）' : '○ 未启用';
+    const rr = d.random_reply || {};
+    document.getElementById('rr-enabled').checked = !!rr.enabled;
+    setNum('rr-probability', Math.round((rr.probability||0)*100), 5);
+    setNum('rr-cooldown-min', rr.cooldown_min, 5);
+    document.getElementById('rr-enable-label').textContent = rr.enabled ? '● 已启用' : '○ 未启用';
     aiProviderHint();
   }catch(e){}
 }
@@ -1334,11 +1404,17 @@ async function saveAi(){
     memory_interval: parseInt(document.getElementById('ai-interval').value)||0,
     temperature: parseFloat(document.getElementById('ai-temp').value)||0.85,
     max_tokens: parseInt(document.getElementById('ai-maxtokens').value)||0,
-    timeout: parseInt(document.getElementById('ai-timeout').value)||90
+    timeout: parseInt(document.getElementById('ai-timeout').value)||90,
+    random_reply: {
+      enabled: document.getElementById('rr-enabled').checked,
+      probability: (parseFloat(document.getElementById('rr-probability').value)||0)/100,
+      cooldown_min: parseInt(document.getElementById('rr-cooldown-min').value)||0
+    }
   };
   const d = await (await fetch('/api/ai/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   document.getElementById('ai-feedback').textContent = d.ok ? '✓ 已保存' : '保存失败';
   document.getElementById('ai-enable-label').textContent = body.enabled ? '● 已启用' : '○ 未启用';
+  document.getElementById('rr-enable-label').textContent = body.random_reply.enabled ? '● 已启用' : '○ 未启用';
   if(d.ok && d.config){ document.getElementById('ai-base').value = d.config.base_url || ''; document.getElementById('ai-model').value = d.config.model || ''; }
   loadBalance(); loadMem();
 }
@@ -1385,8 +1461,6 @@ async function loadMem(){
       </div>
       <div style="margin-top:4px;color:#333">📝 ${escapeHtml(m.memory||'-')}</div>
       <div style="margin-top:2px;color:#888">⭐ ${escapeHtml(m.summary||'-')}</div>
-      ${m.portrait?`<div style="margin-top:2px;color:#7c3aed">🎭 ${escapeHtml(m.portrait)}</div>`:''}
-      ${m.relations?`<div style="margin-top:2px;color:#0d9488">🕸️ ${escapeHtml(m.relations)}</div>`:''}
       <div style="font-size:11px;color:#bbb;margin-top:2px">${oid}</div>
     </div>`;
   }).join('');
@@ -1879,6 +1953,9 @@ async function loadUsers(){
             <span style="font-size:11px;color:#94a3b8;margin-left:6px">${oid}</span>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:12px;color:#666">昵称</span>
+            <input type="text" id="nick-${oid}" style="width:110px;padding:4px 8px;border-radius:6px;border:1px solid #d1d5db" value="${escapeHtml(u.nick||'')}" placeholder="未命名">
+            <button onclick="saveUserNick('${oid}')" style="background:#6366f1;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">保存昵称</button>
             <span style="font-size:12px;color:#666">喵币</span>
             <input type="number" id="bal-${oid}" style="width:110px;padding:4px 8px;border-radius:6px;border:1px solid #d1d5db" value="${u.balance}">
             <button onclick="saveUserBalance('${oid}')" style="background:#22c55e;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">保存余额</button>
@@ -1901,6 +1978,12 @@ async function saveUserBalance(oid){
   if(d.ok) document.getElementById('bal-'+oid).value = d.balance;
   alert(d.ok ? ('余额已设为 ' + d.balance + ' 喵币') : (d.msg||'保存失败'));
 }
+async function saveUserNick(oid){
+  const v = document.getElementById('nick-'+oid).value.trim();
+  const d = await post('/api/admin/users/nick', {openid: oid, nick: v});
+  alert(d.ok ? ('昵称已保存：' + (d.nick||'（已清空）')) : (d.msg||'保存失败'));
+  if(d.ok){ _tabLoaded.users=false; showTab('users'); }
+}
 async function resetUserFishing(oid){
   if(!confirm('清空该用户的钓鱼数据（鱼获/图鉴/装备/成就）？此操作不可恢复！')) return;
   const d = await post('/api/admin/users/reset_fishing', {openid: oid});
@@ -1911,6 +1994,27 @@ async function resetUserFishing(oid){
 loadAi(); loadBalance(); loadMem(); loadParsePlats(); loadBiliMode();
 refresh();
 setInterval(refresh, 10000);
+
+// ---------- WebUI 登录 ----------
+function showLogin(){ document.getElementById('login-mask').style.display='flex'; }
+function hideLogin(){ document.getElementById('login-mask').style.display='none'; }
+async function doLogin(){
+  const pwd = document.getElementById('login-pwd').value;
+  const msg = document.getElementById('login-msg');
+  msg.textContent = '';
+  try{
+    const d = await (await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:pwd})})).json();
+    if(d && d.ok){ hideLogin(); document.getElementById('login-pwd').value=''; refresh(); }
+    else{ msg.textContent = '密码错误，请重试'; }
+  }catch(e){ msg.textContent = '网络错误，请重试'; }
+}
+// 首次加载探测：/api/status 返回 401 说明需要登录
+(async function(){
+  try{
+    const r = await fetch('/api/status');
+    if(r.status === 401){ showLogin(); return; }
+  }catch(e){}
+})();
 </script>
 </body>
 </html>
