@@ -318,7 +318,8 @@ def _split_system(messages):
 
 
 def build_chat_body(provider_id: str, model: str, messages: list,
-                    temperature: float = 0.85, max_tokens: int = 0) -> dict:
+                    temperature: float = 0.85, max_tokens: int = 0,
+                    reasoning_effort: str = None) -> dict:
     """按 chat_format 组装请求体（dict，交给 aiohttp 的 json= 参数）。"""
     fmt = get(provider_id).get("chat_format", "openai")
     system, rest = _split_system(messages)
@@ -363,6 +364,9 @@ def build_chat_body(provider_id: str, model: str, messages: list,
     }
     if max_tokens:
         body["max_tokens"] = int(max_tokens)
+    # DeepSeek 等支持 reasoning_effort 的服务商用它控制思考强度（默认 high，费 token）
+    if reasoning_effort:
+        body["reasoning_effort"] = str(reasoning_effort)
     return body
 
 
