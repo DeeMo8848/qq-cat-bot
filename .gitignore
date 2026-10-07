@@ -49,12 +49,23 @@ tools/.venv/
 # 运行时从 GitHub 资源仓库克隆的素材（图库/龙图，由 install.ps1 拉取，不入库）
 resources/
 
+# 影之诗制卡器插件的渲染资源（wasm 内核 + 游戏字体 + 职业背景，约 39MB）。
+# 从「影之诗制卡器-官方开源版」复制而来（含 Cygames 版权素材），不入库。
+# 重建方式：python tmp/_sv_copy_assets.py（需先有原项目）
+plugins/sv_card/assets/
+
 # ⚠️ 注意：bot/assets/fonts/ 是【必须入库】的项目资产（内置字体包），
 #    用于让 meme 等渲染在没装中文字体的机器上也正常出字，别加忽略规则。
 #    重新生成：python bot/meme/build_font_bundle.py
 #    内含：
 #      qqbot-fonts.ttc     中文字体集合（21 个族名别名，约 3.6MB）
 #      NotoColorEmoji.ttf  彩色 emoji（Noto Color Emoji，OFL-1.1，约 10MB）
+#
+# ★ 例外：微软雅黑（msyh.ttc / msyhbd.ttc）是微软/Monotype 的商业字体，
+#   授权仅限 Windows 系统内使用，放进代码仓库属超授权；且两者合计约 36MB。
+#   → 不入库。需要时从本机 C:\Windows\Fonts\ 复制，或改用已入库的 qqbot-fonts.ttc。
+bot/assets/fonts/msyh.ttc
+bot/assets/fonts/msyhbd.ttc
 
 # 运行时从 meme 源仓库拉取的批量模板（不入库；feiyu 为本地移植插件需保留）
 bot/meme/custom_memes/*
