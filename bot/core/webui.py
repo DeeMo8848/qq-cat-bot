@@ -60,6 +60,7 @@ def _module_groups():
     from plugins.words import WORD_CMD_NAMES
     from plugins.cards import CARD_CMD_NAMES
     from plugins.sv_card import SV_CMD_NAMES
+    from plugins.md_test import MD_CMD_NAMES
 
     other_plugins = [
         ("search_img", "搜图", SEARCH_CMD_NAMES, SEARCH_GROUPS),
@@ -72,6 +73,7 @@ def _module_groups():
         ("jrys", "今日运势签到", JRESY_CMD_NAMES, []),
         ("random_words", "随机一言/名言/诗词", WORD_CMD_NAMES, []),
         ("sv_card", "影之诗制卡器", SV_CMD_NAMES, []),
+        ("md_test", "Markdown测试场", MD_CMD_NAMES, []),
         # 「下载图片 / 下载表情」归入「其他功能」
         ("download_image", "下载图片/表情", ["cmd_download_image"], []),
     ]
