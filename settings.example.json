@@ -46,5 +46,18 @@
   },
   "_comment_card_rarity_ranges": "各品级卡牌的出价区间（最低价~最高价喵币，AI 判品级后区间内随机取整到 50）。可在 Web 后台「卡牌管理」页修改。",
   "CARD_KEY_SECRET": "",
-  "_comment_card_key_secret": "卡牌收集册链接签名密钥（生成不可猜的 userKey）。留空则首次使用时自动生成并保存到 data/cards/key_secret.txt。"
+  "_comment_card_key_secret": "卡牌收集册链接签名密钥（生成不可猜的 userKey）。留空则首次使用时自动生成并保存到 data/cards/key_secret.txt。",
+
+  "WEBSEARCH_MODEL": "deepseek-v4-pro",
+  "_comment_websearch": "联网搜索（「搜索 xxx」/「帮我搜一下 xxx」）走 DeepSeek 官方 Responses API + 服务端 web_search 工具，不需要任何第三方搜索 API key。★ 实测两点：只有 deepseek-v4-pro 能真正触发搜索（flash 会搜不到、正文为空）；工具类型固定写 web_search_2025_08_26。成本：收紧提示后约 3k token/次，不收紧会烧到 5 万/次。",
+  "WEBSEARCH_MAX_OUTPUT_TOKENS": 700,
+  "WEBSEARCH_TIMEOUT": 120,
+  "WEBSEARCH_CACHE_TTL": 600,
+  "_comment_websearch_cache": "同一问题缓存秒数（默认 10 分钟）；WEBSEARCH_COOLDOWN 是同一用户冷却秒数，防止狂刷烧 token。",
+  "WEBSEARCH_COOLDOWN": 5,
+
+  "LINK_SUMMARY_MAX_CHARS": 6000,
+  "_comment_link_summary": "链接总结：引用一条带链接的消息 + 说「帮我总结下这个」触发（故意不用自动触发、也不用「总结」这种过短词）。正文用本地 bs4+lxml 解析；抓不到时走 r.jina.ai 兜底（免费、无需 key、20 请求/分钟）—— 不想把 URL 发给第三方就把 LINK_SUMMARY_JINA_FALLBACK 设为 false。",
+  "LINK_SUMMARY_TIMEOUT": 20,
+  "LINK_SUMMARY_JINA_FALLBACK": true
 }

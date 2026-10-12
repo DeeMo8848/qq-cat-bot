@@ -296,3 +296,4 @@ from plugins import selfupdate  # noqa: E402,F401
 from plugins import ops  # noqa: E402,F401
 from plugins import sv_card  # noqa: E402,F401
 from plugins import md_test  # noqa: E402,F401
+from plugins import webtools  # noqa: E402,F401  联网搜索 / 链接总结

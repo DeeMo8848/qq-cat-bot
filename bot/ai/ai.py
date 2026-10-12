@@ -345,6 +345,16 @@ async def test_ping(msg="你好，在吗喵"):
     return await _call(cfg, msgs, timeout=30)
 
 
+async def complete_once(system, user, timeout=60):
+    """一次性补全：不读/不写会话历史与记忆，供「链接总结」这类自组织提示词的功能复用同一个模型。"""
+    cfg = await get_config()
+    msgs = [
+        {"role": "system", "content": system or ""},
+        {"role": "user", "content": user or ""},
+    ]
+    return await _call(cfg, msgs, timeout=timeout)
+
+
 def list_providers():
     """供 WebUI 渲染服务商下拉与默认值。"""
     return _prov.list_for_ui()

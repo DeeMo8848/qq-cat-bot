@@ -88,6 +88,20 @@ PEAK_GUARD_PERIODS = _cfg("PEAK_GUARD_PERIODS", "09:00-12:00,14:00-18:00")
 PEAK_GUARD_WEEKDAYS = _cfg("PEAK_GUARD_WEEKDAYS", "0,1,2,3,4")
 PEAK_REMINDER_ENABLED = bool(_cfg("PEAK_REMINDER_ENABLED", False))
 
+# ---- 联网搜索 / 链接总结（plugins/webtools）----
+# 走 DeepSeek 官方 Responses API + 服务端 web_search 工具，不用任何第三方搜索 key。
+# ★ 实测：只有 deepseek-v4-pro 能真正触发搜索（flash 会 status=incomplete 且搜不到），
+#   工具类型必须写 web_search_2025_08_26 —— 详见 plugins/webtools/search.py 顶部注释。
+WEBSEARCH_MODEL = _cfg("WEBSEARCH_MODEL", "deepseek-v4-pro")
+WEBSEARCH_MAX_OUTPUT_TOKENS = int(_cfg("WEBSEARCH_MAX_OUTPUT_TOKENS", 700))
+WEBSEARCH_TIMEOUT = int(_cfg("WEBSEARCH_TIMEOUT", 120))
+WEBSEARCH_CACHE_TTL = int(_cfg("WEBSEARCH_CACHE_TTL", 600))      # 同一问题缓存秒数
+WEBSEARCH_COOLDOWN = int(_cfg("WEBSEARCH_COOLDOWN", 5))          # 同一用户冷却秒数
+# ---- 链接总结 ----
+LINK_SUMMARY_MAX_CHARS = int(_cfg("LINK_SUMMARY_MAX_CHARS", 6000))   # 送给模型的正文上限
+LINK_SUMMARY_TIMEOUT = int(_cfg("LINK_SUMMARY_TIMEOUT", 20))
+LINK_SUMMARY_JINA_FALLBACK = bool(_cfg("LINK_SUMMARY_JINA_FALLBACK", True))  # JS 页面兜底
+
 # ---- AI 对话增强（逻辑见 bot/ai/ai.py）----
 # 随机触发回复：群聊里没 @ 的消息也按概率偶尔回一句，增加趣味。默认关闭，需要时在
 # settings.json 打开并调概率。概率为 0~1 的浮点（0.05 ≈ 每 20 条闲聊回 1 条）；
