@@ -191,12 +191,13 @@ async def cmd_bot_update(ctx):
     # 3) 工作区有本地改动时，避免 pull 被覆盖
     dirty = _dirty_files()
     if dirty:
-        listing = "\n".join(dirty[:10])
-        extra = f"\n…等 {len(dirty)} 个文件" if len(dirty) > 10 else ""
+        # ★ 不列文件清单：改动一多就是刷屏（实测报过 61 个）。
+        #   想看细节自己去服务器跑 `git status --porcelain`；
+        #   想「保留改动照样更新」就发「强制更新」。
         await ctx.reply_text(
-            f"⚠️ 检测到本机有 {len(dirty)} 个文件改动未提交，为避免覆盖先不自动更新喵：\n"
-            f"```\n{listing}{extra}\n```\n"
-            "请先提交或还原这些改动，再发一次更新命令。"
+            f"⚠️ 本机有 {len(dirty)} 个文件改动未提交，为避免覆盖先不自动更新喵。\n"
+            "· 想保留这些改动并强制更新 → 发「强制更新」\n"
+            "· 想先看是什么 → 服务器上 `git status --porcelain`"
         )
         return
 
@@ -238,6 +239,105 @@ async def cmd_bot_update(ctx):
     await ctx.reply_text(
         f"🎉 更新完成喵！\n当前版本：{sig[:140]}{note}\n即将重启…"
     )
+    asyncio.get_event_loop().create_task(_delayed_restart(ctx))
+
+
+@register(
+    keywords=["强制更新", "提交并更新", "bot强制更新", "强制bot更新"],
+    help="把本机改动先归档成 commit，再强制对齐 GitHub 最新代码并重启",
+    role=ROLE_ASSISTANT,
+    exact=True,
+)
+async def cmd_bot_update_force(ctx):
+    """「提交并更新」：本机改动一个都不丢，但照样能更新。
+
+    与普通更新的区别：普通更新一看到工作区脏就中止；这条先把脏改动
+    `git add -A` + commit 成一个**快照提交**，再 `git reset --hard origin/main`
+    硬对齐远程 —— 所以既不会被拦，也不会产生冲突标记（普通 pull 合并时可能留标记）。
+
+    ★ 要注意：reset --hard 会让工作区与远程完全一致 ⇒
+      「main 里没有、但被这次归档进快照」的文件会从工作区消失
+      （服务器上的 .bak / tar.gz 之类）。它们仍留在快照 commit 里，
+      要找回用 `git checkout <快照sha> -- <文件>`。
+      .gitignore 里的东西（settings.json、data/、插件大素材）不受影响。
+    """
+    if not _is_git_repo():
+        await ctx.reply_text("呜…当前目录不是 git 仓库，没法强制更新喵。")
+        return
+    branch = _current_branch()
+    if branch != _BRANCH:
+        await ctx.reply_text(
+            f"呜…当前在 `{branch}` 分支，不是我预期的 `{_BRANCH}`，先不动喵。"
+        )
+        return
+
+    await ctx.reply_text("🔧 强制更新：先归档本机改动，再对齐 GitHub 最新代码喵…")
+
+    code, out, err = _git("fetch", "--prune", _REMOTE, timeout=_GIT_TIMEOUT)
+    if code != 0:
+        await ctx.reply_text(
+            f"呜…连不上 GitHub，强制更新中止（什么都没改）喵。\n```\n{(err or out)[:300]}\n```"
+        )
+        return
+    code, remote, err = _git("rev-parse", f"{_REMOTE}/{_BRANCH}")
+    if code != 0 or not remote:
+        await ctx.reply_text(f"呜…读不到远程分支 `{_REMOTE}/{_BRANCH}` 喵。")
+        return
+
+    # 1) 归档：已改动 + 未跟踪的文件统统存成一个 commit（保证不丢）
+    snap = ""
+    dirty = _dirty_files()
+    if dirty:
+        code, _, err = _git("add", "-A", timeout=120)
+        if code != 0:
+            await ctx.reply_text(f"呜…归档失败（git add）喵。\n```\n{err[:300]}\n```")
+            return
+        ts = time.strftime("%Y-%m-%d %H:%M")
+        code, out, err = _git(
+            "-c", "user.name=qqbot", "-c", "user.email=qqbot@local",
+            "commit", "-m",
+            f"chore(自动): 强制更新前的本机快照 {ts}（{len(dirty)} 项）",
+            timeout=60,
+        )
+        if code != 0:
+            await ctx.reply_text(
+                f"呜…归档失败（git commit）喵。\n```\n{(err or out)[:300]}\n```"
+            )
+            return
+        snap = _short(_local_head())
+
+    # 2) 依赖清单是否变化（对齐前后比对）
+    _, req_before, _ = _git("rev-parse", "HEAD:requirements.txt")
+
+    # 3) 硬对齐远程最新代码
+    code, out, err = _git("reset", "--hard", remote, timeout=180)
+    if code != 0:
+        tip = f"本机改动已安全归档为 {snap}，可用 `git reset --hard {snap}` 还原。" if snap else ""
+        await ctx.reply_text(f"呜…强制对齐失败喵。{tip}\n```\n{(err or out)[:300]}\n```")
+        return
+
+    _, req_after, _ = _git("rev-parse", "HEAD:requirements.txt")
+    note = ""
+    if (req_before or "") != (req_after or ""):
+        rc, o, _ = await _sh(
+            f'"{PYTHON or sys.executable}" -m pip install -r requirements.txt',
+            timeout=600,
+        )
+        note = "\n📚 依赖已更新" if rc == 0 else \
+            f"\n⚠️ 依赖安装失败（{rc}），请手动跑 pip install -r requirements.txt"
+
+    code, sig, _ = _git("log", "-1", "--format=%h %s", "HEAD")
+    lines = ["🎉 强制更新完成喵！", f"当前版本：{sig[:120]}"]
+    if snap:
+        lines.append(
+            f"· 原来那 {len(dirty)} 项改动已归档为 {snap}"
+            f"（要找回：`git checkout {snap} -- <文件>`）"
+        )
+    else:
+        lines.append("· 本机本来就是干净的，直接对齐远程")
+    lines.append("· main 里没有的旧文件（.bak / tar.gz 之类）已从工作区移除，需要的话从上面快照取回")
+    lines.append(f"即将重启…{note}")
+    await ctx.reply_text("\n".join(lines))
     asyncio.get_event_loop().create_task(_delayed_restart(ctx))
 
 

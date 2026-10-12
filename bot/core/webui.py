@@ -102,6 +102,7 @@ def _module_groups():
     test_plugins = [
         ("test_hello", "打招呼", ["cmd_hello"]),
         ("test_update", "bot 更新", ["cmd_bot_update"]),
+        ("test_update_force", "强制更新（归档本机改动后硬对齐）", ["cmd_bot_update_force"]),
         ("test_ops_status", "bot 状态", ["cmd_bot_status"]),
         ("test_ops_restart", "重启 bot", ["cmd_bot_restart"]),
         ("test_boot_notify", "重启提醒", ["cmd_boot_notify"]),
