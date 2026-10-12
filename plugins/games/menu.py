@@ -12,7 +12,10 @@ async def cmd_game_menu(ctx):
         "· 21点\n"
         "· 海龟汤\n"
         "· 钓鱼系统\n"
-        "· 卡牌制作"
+        "· 卡牌制作\n"
+        "· 影之诗卡牌制作\n"
+        "· FC游戏\n"
+        "· 小游戏大厅"
     )
 
 
@@ -68,7 +71,10 @@ async def cmd_game_menu_fishing(ctx):
         "· 排行榜 — 喵喵币财富榜\n"
         "· 鱼市 / 挂鱼 / 买鱼 / 撤单 — 玩家交易\n"
         "· 交易所 / 持仓 — 大宗商品投资\n"
-        "· 转账 / 发红包 / 领红包 / 红包列表 — 社交\n\n"
+        "· 转账 / 发红包 / 领红包 / 红包列表 — 社交\n"
+        "· 骰宝 <类型> <金额> — 大/小/单/双/豹子/点数，即时结算\n"
+        "· 命运之轮 <金额> — 高风险轮盘（继续挑战 / 放弃挑战）\n"
+        "· 擦弹 <金额> — 随机倍率（支持 allin / halfin）\n\n"
         "发送「游戏娱乐」回到列表喵"
     )
 
@@ -87,3 +93,21 @@ async def cmd_game_menu_card(ctx):
         "· 导出卡牌 <卡名> 为图片 / 为网页 — 导出卡牌文件\n\n"
         "发送「游戏娱乐」回到列表喵"
     )
+
+
+@register(keywords=["影之诗卡牌制作"], help="🎴 影之诗制卡详细命令", role=ROLE_ALL, exact=True)
+async def cmd_game_menu_sv(ctx):
+    # 复用 sv_card 的帮助文本，以后改帮助只需改一处
+    from plugins.sv_card.commands import HELP_TEXT
+    await ctx.reply_text(HELP_TEXT + "\n\n发送「游戏娱乐」回到列表喵")
+
+
+@register(keywords=["FC游戏", "fc游戏"], help="🎮 FC 游戏入口", role=ROLE_ALL, exact=True)
+async def cmd_game_fc(ctx):
+    # 额外给了小写别名「fc游戏」：框架的 exact 匹配区分大小写，手机上容易打成小写
+    await ctx.reply_text("好玩的喵，快来试试吧喵：https://deemo8848.dpdns.org/fc")
+
+
+@register(keywords=["小游戏大厅"], help="🎮 小游戏大厅入口", role=ROLE_ALL, exact=True)
+async def cmd_game_hall(ctx):
+    await ctx.reply_text("测试中喵，一般般喵：https://minigame.deemo8848.dpdns.org/")

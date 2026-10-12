@@ -88,7 +88,8 @@ def _module_groups():
         ("cards", "卡牌制作", sorted(CARD_CMD_NAMES)),
     ]
     game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES | set(CARD_CMD_NAMES) \
-        | {"cmd_buy_machine", "cmd_upgrade_machine"}
+        | {"cmd_buy_machine", "cmd_upgrade_machine",
+           "cmd_game_menu_sv", "cmd_game_fc", "cmd_game_hall"}
 
     # 测试功能：打招呼 / 自更新 / 运维（状态&重启）/ 版本查询 / 网页测试
     test_plugins = [
@@ -117,6 +118,9 @@ def _module_groups():
         "cmd_game_menu_turtle",     # 海龟汤清单
         "cmd_game_menu_fishing",    # 钓鱼系统清单
         "cmd_game_menu_card",       # 卡牌制作清单
+        "cmd_game_menu_sv",         # 影之诗卡牌制作清单
+        "cmd_game_fc",              # FC游戏入口
+        "cmd_game_hall",            # 小游戏大厅入口
     }
 
     return (game_groups, game_names, other_plugins, other_names,
