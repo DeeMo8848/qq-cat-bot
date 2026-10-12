@@ -367,13 +367,23 @@ async def cmd_card_help(ctx):
         "可选参数：边框xx 背景xx 牌背xx 卡封xx 边框特效xx 辉光强度0~2 缩放0.8 整幅 透明 抠图 不抠图 "
         "裁剪 不裁剪 自适应0/1/2 主体悬浮 描边 文本型/特殊文本型/无文本型 标题xx 描述xx 跳过评估\n"
         "（默认整幅不抠图；整幅=恒铺满、透明=不足留白、裁剪默认开、不裁剪=主体延伸出边框外沿）\n"
-        "「收集册」打开我的收集册网页 · 「我的卡牌」文本列表\n"
+        "「收集册」打开我的收集册网页（可自建收藏集分类 / 查看已解锁素材包）· 「我的卡牌」文本列表\n"
         "（组合规则：带「整幅」忽略「主体悬浮」「描边」；「整幅+抠图」忽略「背景」，悬浮/描边保留）\n"
         "「销毁卡牌 卡名」销毁（无补偿）· 「上架卡牌 卡名 价格」出售\n"
         "「购买卡牌 卡名」买别人的卡 · 「卡牌市场」商店网页（含素材分页预览）\n"
         "「导出卡牌 卡名 为图片 / 为网页」导出卡牌文件（2D 图 / 3D 单文件网页）\n"
         "「素材包」查看素材 · 「购买背景 名称」「购买辉光 名称」等解锁素材（永久使用）\n"
         "同一用户不能做两张同名卡（会拦截，先销毁旧的或换名）；操作重名卡时用消息里给的卡牌 ID 指定")
+
+
+@register(keywords=["卡牌模板"], help="🃏 卡牌制作参数速查（纯文本，可直接复制）", role=ROLE_ALL, exact=True)
+async def cmd_card_template(ctx):
+    """卡牌制作的参数速查表 —— 按需求方的原文**纯文本原样**发出，方便直接复制修改。"""
+    await ctx.reply_text(
+        "卡牌制作 卡名 可选：边框x 背景x 牌背x 卡封x 边框特效x 辉光强度0~2 缩放0-1 "
+        "整幅/透明 抠图/不抠图 裁剪/不裁剪 自适应0/1/2 主体悬浮 描边 "
+        "文本型/特殊文本型/无文本型 标题x 描述x 跳过评估"
+    )
 
 
 @register(keywords=["卡牌制作"], help="🃏 制作卡牌（引用图片 + 卡名 [参数]）", role=ROLE_ALL)
@@ -718,7 +728,7 @@ async def cmd_export_card(ctx):
 
 # web 后台命令列表（卡牌模块整体开关）
 CARD_CMD_NAMES = {
-    "cmd_card_help", "cmd_card_make", "cmd_album", "cmd_my_cards",
+    "cmd_card_help", "cmd_card_make", "cmd_card_template", "cmd_album", "cmd_my_cards",
     "cmd_destroy_card", "cmd_card_market", "cmd_list_card", "cmd_unlist_card",
     "cmd_buy_card", "cmd_materials", "cmd_buy_material", "cmd_export_card",
 }
