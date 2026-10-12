@@ -33,7 +33,10 @@ from . import parser as P
 from . import render as R
 
 # 供 Web 后台「插件总开关」使用的命令名集合
-SV_CMD_NAMES = {"cmd_sv_card", "cmd_sv_card_diy", "cmd_sv_card_help"}
+SV_CMD_NAMES = {
+    "cmd_sv_card", "cmd_sv_card_diy", "cmd_sv_card_help",
+    "cmd_sv_template", "cmd_sv_diy_template", "cmd_sv_online",
+}
 
 # ---- 触发词 ----
 WB_TRIGGERS = ["sv卡牌", "sv", "szb卡牌", "影之诗卡牌", "影之诗"]
@@ -323,3 +326,73 @@ HELP_TEXT = """🎴 影之诗制卡器
 )
 async def cmd_sv_card_help(ctx):
     await ctx.reply(HELP_TEXT)
+
+
+# ---------- 参数速查模板（按需求方原文**纯文本原样**发，方便直接复制去改）----------
+SV_TEMPLATE_TEXT = """（均为可选）
+卡名：
+职业：中立/精灵/皇家护卫/巫师/龙族/梦魇/主教/超越者
+特殊框：普通/style_101
+种类：随从/护符/法术
+稀有度：铜/银/金/虹
+费用：
+攻击：
+体力：
+太麻烦了？发送：省略打牌蒸蒸日上！ 在线使用"""
+
+SV_DIY_TEMPLATE_TEXT = """（均为可选）
+卡名：
+职业：中立/精灵/皇家护卫/巫师/龙族/梦魇/主教/超越者
+特殊框：普通/style_101
+种类：随从/护符/法术
+稀有度：铜/银/金/虹
+费用：
+攻击：
+体力：
+正文：
+【入场曲】对对手的战场上的所有随从造成5点伤害。回复自己的主战者5点生命值。
+[hr]
+【疾驰】
+【守护】
+【灵气】
+进化：
+超进化：
+纹章：（暂时舍弃）
+画师：
+脚注：
+补充信息：
+[b][/b]：关键词
+[hr]：分割线
+太麻烦了？发送：省略打牌蒸蒸日上！ 在线使用"""
+
+SV_ONLINE_URL = "https://deemo8848.dpdns.org/svmaker/"
+
+
+@register(
+    keywords=["影之诗卡牌模板", "sv卡牌模板", "szb卡牌模板"],
+    help="🎴 影之诗单卡图参数速查（纯文本）",
+    exact=True,
+    role=ROLE_ALL,
+)
+async def cmd_sv_template(ctx):
+    await ctx.reply_text(SV_TEMPLATE_TEXT)
+
+
+@register(
+    keywords=["影之诗卡牌效果图模板", "sv卡牌效果图模板", "szb卡牌效果图模板"],
+    help="🎴 影之诗效果图参数速查（纯文本）",
+    exact=True,
+    role=ROLE_ALL,
+)
+async def cmd_sv_diy_template(ctx):
+    await ctx.reply_text(SV_DIY_TEMPLATE_TEXT)
+
+
+@register(
+    keywords=["省略打牌蒸蒸日上"],
+    help="🎴 影之诗在线制卡器",
+    exact=True,
+    role=ROLE_ALL,
+)
+async def cmd_sv_online(ctx):
+    await ctx.reply_text(SV_ONLINE_URL)
