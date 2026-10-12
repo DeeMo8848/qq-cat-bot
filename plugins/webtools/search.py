@@ -146,6 +146,11 @@ async def search(query, timeout=None):
         raise RuntimeError("当前 AI 服务商不是 DeepSeek，官方联网搜索用不了喵")
 
     model = WEBSEARCH_MODEL or "deepseek-v4-pro"
+    if "pro" not in model.lower():
+        # 不是为了拦，是为了让「改配置想省钱」的人能在日志里看到原因：
+        # flash 不是便宜版搜索，是根本搜不出来（status=incomplete、正文空）。
+        _log.warning("[webtools] WEBSEARCH_MODEL=%s —— 实测只有 deepseek-v4-pro 能触发联网搜索，"
+                     "flash 会返回 incomplete 且正文为空", model)
     body = {
         "model": model,
         "instructions": _SYS_PROMPT,
@@ -191,8 +196,11 @@ async def search(query, timeout=None):
     if "http" not in text and out["sources"]:
         text += "\n\n🔗 来源：\n" + "\n".join(out["sources"][:3])
 
-    print("[webtools] 联网搜索完成：%.1fs tokens=%s 来源=%d｜%s"
-          % (time.time() - t0, out["usage"].get("total_tokens"), len(out["sources"]), q[:40]),
+    # ★ 打模型名：搜索与「AI 聊天」用的是两套模型（搜索固定 pro，聊天用后台里设的那个，
+    #   通常是 flash），出问题时一眼能看出是哪套在花钱。
+    print("[webtools] 联网搜索完成：%.1fs model=%s tokens=%s 来源=%d｜%s"
+          % (time.time() - t0, model, out["usage"].get("total_tokens"),
+             len(out["sources"]), q[:40]),
           flush=True)
     return {"text": text, "sources": out["sources"], "usage": out["usage"]}
 
