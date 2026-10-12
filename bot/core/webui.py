@@ -61,6 +61,7 @@ def _module_groups():
     from plugins.cards import CARD_CMD_NAMES
     from plugins.sv_card import SV_CMD_NAMES
     from plugins.md_test import MD_CMD_NAMES
+    from plugins.webtools import WEBTOOLS_CMD_NAMES
 
     other_plugins = [
         ("search_img", "搜图", SEARCH_CMD_NAMES, SEARCH_GROUPS),
@@ -72,8 +73,12 @@ def _module_groups():
         ("netease_music", "网易云点歌", NCM_CMD_NAMES, []),
         ("jrys", "今日运势签到", JRESY_CMD_NAMES, []),
         ("random_words", "随机一言/名言/诗词", WORD_CMD_NAMES, []),
-        ("sv_card", "影之诗制卡器", SV_CMD_NAMES, []),
         ("md_test", "Markdown测试场", MD_CMD_NAMES, []),
+        # 联网搜索 / 链接总结：一个插件两个子开关（分别对应两条命令）
+        ("webtools", "联网搜索/链接总结", WEBTOOLS_CMD_NAMES, [
+            ("webtools_search", "联网搜索", ["cmd_web_search"]),
+            ("webtools_summary", "链接总结", ["cmd_link_summary"]),
+        ]),
         # 「下载图片 / 下载表情」归入「其他功能」
         ("download_image", "下载图片/表情", ["cmd_download_image"], []),
     ]
@@ -86,17 +91,20 @@ def _module_groups():
     game_groups = list(GAME_GROUPS) + [
         ("fishing", "钓鱼系统", sorted(FISHING_CMD_NAMES | {"cmd_buy_machine", "cmd_upgrade_machine"})),
         ("cards", "卡牌制作", sorted(CARD_CMD_NAMES)),
+        ("sv_card", "影之诗卡牌制作", sorted(SV_CMD_NAMES)),
     ]
     game_names = set(GAME_CMD_NAMES) | FISHING_CMD_NAMES | set(CARD_CMD_NAMES) \
+        | set(SV_CMD_NAMES) \
         | {"cmd_buy_machine", "cmd_upgrade_machine",
            "cmd_game_menu_sv", "cmd_game_fc", "cmd_game_hall"}
 
-    # 测试功能：打招呼 / 自更新 / 运维（状态&重启）/ 版本查询 / 网页测试
+    # 测试功能：打招呼 / 自更新 / 运维（状态 & 重启 & 重启提醒）/ 版本查询 / 网页测试
     test_plugins = [
         ("test_hello", "打招呼", ["cmd_hello"]),
         ("test_update", "bot 更新", ["cmd_bot_update"]),
         ("test_ops_status", "bot 状态", ["cmd_bot_status"]),
         ("test_ops_restart", "重启 bot", ["cmd_bot_restart"]),
+        ("test_boot_notify", "重启提醒", ["cmd_boot_notify"]),
         ("test_version", "版本查询", ["cmd_bot_version"]),
         ("test_webtest", "网页测试", ["cmd_webtest"]),
     ]
@@ -169,6 +177,8 @@ class WebUI:
         self.app.router.add_post("/api/ai/test", self.ai_test)
         self.app.router.add_post("/api/ai/models", self.ai_models)
         self.app.router.add_get("/api/ai/balance", self.ai_balance)
+        self.app.router.add_get("/api/ai/peak_guard", self.ai_peak_guard)
+        self.app.router.add_post("/api/ai/peak_guard", self.ai_peak_guard)
         self.app.router.add_get("/api/ai/memory", self.ai_memory)
         self.app.router.add_post("/api/ai/memory/delete", self.ai_memory_delete)
         # 管理分页 API（卡牌 / 钓鱼 / 用户数据）
@@ -478,7 +488,29 @@ class WebUI:
             bal = await ai_mod.fetch_balance()
         except Exception:
             bal = None
-        return web.json_response({"ok": True, "balance": bal})
+        # 余额必须实时：aiohttp 默认不带缓存头，浏览器可能直接复用上次响应，
+        # 表现就是「点刷新余额一点变化都没有」。
+        resp = web.json_response({"ok": True, "balance": bal})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    async def ai_peak_guard(self, request):
+        """高峰时段钱包保护（定时停用 AI）的开关：读 / 写。
+
+        GET  → {peak_guard:{enabled,reminder}, status:{当前时段/下次切换}}
+        POST {enabled, reminder} → 写 settings.json + 热更新 config 常量，免重启生效
+        """
+        from bot.core import peak_guard as pg
+        if request.method == "POST":
+            data = await request.json() or {}
+            ok = pg.save_flags(data.get("enabled"), data.get("reminder"))
+            if not ok:
+                return web.json_response({"ok": False, "msg": "写入 settings.json 失败"},
+                                         status=500)
+        resp = web.json_response({"ok": True, "peak_guard": pg.flags(),
+                                  "status": pg.current_status()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     async def ai_memory(self, request):
         mem = await ai_mod.all_memory()
@@ -939,6 +971,23 @@ PAGE_HTML = """<!DOCTYPE html>
       <div class="tip" style="margin-top:6px">概率 5% ≈ 每 20 条闲聊回 1 条；高峰时段随机回复会被钱包保护拦掉</div>
     </div>
     <div style="margin-top:12px;border-top:1px solid #f1f1f1;padding-top:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b style="font-size:13px">🕘 高峰时段钱包保护（定时停用 AI）</b>
+        <label class="switch" style="vertical-align:middle;display:inline-block;width:38px;height:20px">
+          <input type="checkbox" id="pg-enabled" onchange="savePeakGuard()"><span class="slider" style="height:20px"></span>
+        </label>
+        <span id="pg-label" style="font-size:12px;color:#888"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <span style="font-size:13px">消息提醒（高峰起/止在群里播报一句）</span>
+        <label class="switch" style="vertical-align:middle;display:inline-block;width:38px;height:20px">
+          <input type="checkbox" id="pg-reminder" onchange="savePeakGuard()"><span class="slider" style="height:20px"></span>
+        </label>
+        <span id="pg-reminder-label" style="font-size:12px;color:#888"></span>
+      </div>
+      <div class="tip" id="pg-status" style="margin-top:6px"></div>
+    </div>
+    <div style="margin-top:12px;border-top:1px solid #f1f1f1;padding-top:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <b style="font-size:13px">用户记忆 / 评价（AI 自动总结，程序仅保存）</b>
         <button onclick="loadMem()" style="font-size:12px;padding:4px 10px;border:none;border-radius:6px;background:#e5e7eb;cursor:pointer">刷新</button>
@@ -1114,7 +1163,16 @@ function pluginRow(s){
 async function refresh(){
   try{
     const r = await fetch('/api/status');
-    const d = await r.json();
+    // 设了 WEBUI_PASSWORD 且未登录时后台返回 401：弹登录框，不要当成「连接失败」
+    if(r.status === 401){ showLogin(); document.getElementById('log-box').textContent = '需要登录：请输入后台密码'; return; }
+    // 不用 r.json()：响应不是 JSON 时（被代理/网关拦、路径打到了别的服务等），
+    // 原生的 “SyntaxError: Unexpected …” 完全看不出原因 —— 这里带上状态码与响应开头
+    const _raw = await r.text();
+    let d;
+    try{ d = JSON.parse(_raw); }
+    catch(_e){
+      throw new Error('后台返回的不是 JSON（HTTP ' + r.status + ' ' + (r.statusText || '') + '）：' + _raw.slice(0, 120));
+    }
     const badge = document.getElementById('bot-badge');
     badge.textContent = d.online ? '● 在线' : '○ 离线';
     badge.className = 'badge ' + (d.online ? 'on' : 'off');
@@ -1447,10 +1505,47 @@ async function fetchAiModels(){
 }
 async function loadBalance(){
   try{
-    const d = await (await fetch('/api/ai/balance')).json();
+    // 带时间戳绕开浏览器缓存（否则点「刷新余额」可能拿到的还是上一次的响应）
+    const d = await (await fetch('/api/ai/balance?t=' + Date.now())).json();
     const b = d.balance;
-    document.getElementById('ai-bal').textContent = b ? ('¥ ' + b.total + (b.currency?' '+b.currency:'') + '（' + b.provider + '）') : '不支持或查询失败';
+    if(!b){ document.getElementById('ai-bal').textContent = '不支持或查询失败'; return; }
+    // DeepSeek 的 total_balance = 充值余额 + 赠金，而官方后台页面显示的是「充值余额」，
+    // 两者天生不等（曾出现「面板 25.69 / 官网 19.69」的疑惑）→ 把明细一并显示。
+    let extra = '';
+    if(parseFloat(b.granted || 0) > 0){
+      extra = '　明细：充值 ¥' + b.topped_up + ' + 赠金 ¥' + b.granted;
+    }
+    document.getElementById('ai-bal').textContent =
+      '¥ ' + b.total + (b.currency ? ' ' + b.currency : '') + '（' + b.provider + '）' + extra;
   }catch(e){ document.getElementById('ai-bal').textContent = '查询失败'; }
+}
+// ---------- 高峰时段钱包保护（定时停用 AI） ----------
+async function loadPeakGuard(){
+  try{
+    const d = await (await fetch('/api/ai/peak_guard?t=' + Date.now())).json();
+    const g = d.peak_guard || {};
+    document.getElementById('pg-enabled').checked = !!g.enabled;
+    document.getElementById('pg-reminder').checked = !!g.reminder;
+    document.getElementById('pg-label').textContent = g.enabled ? '● 已启用' : '○ 未启用';
+    document.getElementById('pg-reminder-label').textContent = g.reminder ? '● 已开启' : '○ 已关闭';
+    const s = d.status || {};
+    document.getElementById('pg-status').textContent =
+      '规则：工作日 09:00-12:00 / 14:00-18:00 视为高峰（不含法定节假日，周末全天空闲）'
+      + '　|　当前：' + (s.peak ? '高峰（AI 已停用）' : '空闲（AI 正常）')
+      + '　下次切换：' + (s.next_at || '-');
+  }catch(e){
+    const el = document.getElementById('pg-status'); if(el) el.textContent = '加载失败: ' + e;
+  }
+}
+async function savePeakGuard(){
+  const el = document.getElementById('pg-status');
+  try{
+    const d = await post('/api/ai/peak_guard', {
+      enabled: document.getElementById('pg-enabled').checked,
+      reminder: document.getElementById('pg-reminder').checked});
+    if(d && d.ok){ if(el) el.textContent = '✓ 已保存（立即生效，无需重启）'; loadPeakGuard(); }
+    else if(el) el.textContent = '✗ 保存失败：' + ((d && d.msg) || '未知错误');
+  }catch(e){ if(el) el.textContent = '✗ 保存失败：' + e; }
 }
 async function loadMem(){
   const d = await (await fetch('/api/ai/memory')).json();
@@ -1997,7 +2092,7 @@ async function resetUserFishing(oid){
   if(d.ok){ _tabLoaded.users=false; showTab('users'); }
 }
 
-loadAi(); loadBalance(); loadMem(); loadParsePlats(); loadBiliMode();
+loadAi(); loadBalance(); loadPeakGuard(); loadMem(); loadParsePlats(); loadBiliMode();
 refresh();
 setInterval(refresh, 10000);
 

@@ -16,6 +16,7 @@
 
 import asyncio
 import logging
+import os
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -182,6 +183,49 @@ def current_status() -> dict:
     }
 
 
+# ---------- 后台开关（WebUI「AI 对话」分栏用） ----------
+
+def flags() -> dict:
+    """当前两个开关：整个插件是否启用 / 是否发消息提醒。"""
+    from config import PEAK_GUARD_ENABLED, PEAK_REMINDER_ENABLED
+    return {"enabled": bool(PEAK_GUARD_ENABLED),
+            "reminder": bool(PEAK_REMINDER_ENABLED)}
+
+
+def save_flags(enabled=None, reminder=None) -> bool:
+    """写回 settings.json 并热更新 config 常量 —— 无需重启立即生效。
+
+    `is_peak_blocked()` 每次调用都 `from config import PEAK_GUARD_ENABLED`，
+    `_reminder_loop()` 每轮也重新读 —— 所以改完常量下一次判断即生效。
+    """
+    import json as _json
+    import config as _cfg_mod
+    fp = os.path.join(_cfg_mod.ROOT, "settings.json")
+    try:
+        with open(fp, encoding="utf-8") as f:
+            data = _json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    cur = flags()
+    en = cur["enabled"] if enabled is None else bool(enabled)
+    rm = cur["reminder"] if reminder is None else bool(reminder)
+    data["PEAK_GUARD_ENABLED"] = en
+    data["PEAK_REMINDER_ENABLED"] = rm
+    try:
+        with open(fp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        _log.error("[峰谷] 写入 settings.json 失败: %s", e)
+        return False
+    _cfg_mod.PEAK_GUARD_ENABLED = en
+    _cfg_mod.PEAK_REMINDER_ENABLED = rm
+    _cfg_mod._CFG["PEAK_GUARD_ENABLED"] = en
+    _cfg_mod._CFG["PEAK_REMINDER_ENABLED"] = rm
+    return True
+
+
 # ---------- 定时提醒 ----------
 
 def start_reminder_loop(api) -> asyncio.Task:
@@ -191,12 +235,13 @@ def start_reminder_loop(api) -> asyncio.Task:
 
 
 async def _reminder_loop(api):
-    from config import PEAK_REMINDER_ENABLED
     last_state = None      # True=高峰, False=空闲, None=还没判定过
     _suffix_cache = {}     # 记录每个 key 最后发送的日期，避免一天内重复
     try:
         while True:
             try:
+                # ★ 每轮重新读 config：后台改了「消息提醒」开关无需重启即时生效
+                from config import PEAK_REMINDER_ENABLED
                 if PEAK_REMINDER_ENABLED:
                     now = datetime.now(_TZ)
                     cur = is_peak(now)

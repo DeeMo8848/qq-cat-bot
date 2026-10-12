@@ -454,9 +454,15 @@ def parse_balance(provider_id: str, data):
         if rule == "deepseek":
             infos = data.get("balance_infos") or []
             if infos:
+                b = dict(infos[0] or {})
+                # ★ DeepSeek 的 total_balance = granted_balance(赠金) + topped_up_balance(充值)。
+                #   官方后台页面显示的是【充值余额】，所以两个数字天生对不上 —— 把明细一起带出去，
+                #   前端就能显示「¥25.69（充值 19.69 + 赠金 5.99）」，避免被当成“算错了”。
                 return {"provider": p["name"],
-                        "total": infos[0].get("total_balance"),
-                        "currency": infos[0].get("currency", "CNY")}
+                        "total": b.get("total_balance"),
+                        "currency": b.get("currency", "CNY"),
+                        "granted": b.get("granted_balance"),
+                        "topped_up": b.get("topped_up_balance")}
         elif rule == "siliconflow":
             bal = (data.get("data") or {}).get("balance")
             if bal is not None:

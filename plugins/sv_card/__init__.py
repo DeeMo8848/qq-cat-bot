@@ -13,4 +13,8 @@
 """
 
 from . import commands  # noqa: F401  命令注册
-from .commands import SV_CMD_NAMES as CMD_NAMES  # noqa: F401  Web 后台模块开关用
+# ★ 必须导出 `SV_CMD_NAMES` 这个名字：bot/core/webui.py 的 _module_groups() 按此名导入
+#   （写错名字会让 /api/status 抛 ImportError → 后台整个面板 500「检测中…」）
+from .commands import SV_CMD_NAMES  # noqa: F401  Web 后台模块开关用
+
+__all__ = ["SV_CMD_NAMES"]
