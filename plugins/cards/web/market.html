@@ -135,7 +135,11 @@
     margin-top:7px; text-align:center; font-size:11px; color:#b99c6a;
     border:1px dashed var(--line); border-radius:8px; padding:4px 6px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    cursor:pointer; transition:all .15s;
   }
+  .mitem .buy-cmd:hover { border-color:var(--gold); color:var(--gold2); background:rgba(34,27,22,.9); }
+  .mitem .buy-cmd.copied { border-color:#5dbb7c; color:#8fe0a8; border-style:solid; }
+  .mitem .buy-cmd.copyfail { border-color:#6b3030; color:#e8a0a0; border-style:solid; }
 
   .modal {
     position:fixed; inset:0; z-index:40; display:none;
@@ -310,10 +314,48 @@ function makeMaterial(cat, it) {
   const img = it.img
     ? '<img src="' + esc(it.img) + '" alt="" loading="lazy">'
     : '<div class="glow-preview"></div>';
+  const cmd = (BUY_CN[cat.cat] || '购买素材') + ' ' + it.name;
   item.innerHTML = '<div class="thumb">' + price + img + '</div>' +
     '<div class="info"><div class="name">' + esc(it.name) + '</div>' +
-    '<div class="buy-cmd">' + esc(BUY_CN[cat.cat] || '购买素材') + ' ' + esc(it.name) + '</div></div>';
+    '<div class="buy-cmd" title="点击复制购买命令">' + esc(cmd) + '</div></div>';
+  const cmdEl = item.querySelector('.buy-cmd');
+  cmdEl.addEventListener('click', e => {
+    e.stopPropagation();
+    copyText(cmd).then(ok => {
+      cmdEl.classList.remove('copied', 'copyfail');
+      cmdEl.classList.add(ok ? 'copied' : 'copyfail');
+      cmdEl.textContent = ok ? '✅ 已复制：' + cmd : '❌ 复制失败，请长按选择';
+      setTimeout(() => {
+        cmdEl.classList.remove('copied', 'copyfail');
+        cmdEl.textContent = cmd;
+      }, 1500);
+    });
+  });
   return item;
+}
+
+// 复制文本：优先 Clipboard API（需安全上下文），否则回退 execCommand
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------- tab 切换 ----------

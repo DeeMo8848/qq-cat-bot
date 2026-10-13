@@ -28,7 +28,47 @@
     border:1px solid var(--line); padding:7px 14px; border-radius:999px; transition:all .15s;
   }
   header .back:hover { color:var(--gold2); border-color:var(--gold); }
+
+  /* 分类标签栏 */
+  .tabs {
+    position: sticky; top:63px; z-index:15;
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    background: rgba(20,16,12,.92); backdrop-filter: blur(8px);
+    border-bottom:1px solid var(--line);
+    padding:10px 24px;
+  }
+  .tabs button {
+    padding:7px 16px; border-radius:999px; cursor:pointer; font-size:13px;
+    background: var(--panel); color:var(--muted); border:1px solid var(--line);
+    transition:all .15s; font-family:inherit; max-width:180px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .tabs button:hover { color:var(--gold2); border-color:var(--gold); }
+  .tabs button.on {
+    background:linear-gradient(135deg,var(--gold2),var(--gold));
+    color:#2b1d08; border-color:var(--gold); font-weight:700;
+  }
+  .tabs button.new { border-style:dashed; color:#b99c6a; }
+  .tabs button .n { opacity:.7; font-size:11px; margin-left:5px; }
+
+  /* 收藏集操作条（仅在收藏集分页显示） */
+  .colbar {
+    display:none; align-items:center; gap:12px; flex-wrap:wrap;
+    max-width:1240px; margin:18px auto 0; padding:0 24px;
+    color:var(--muted); font-size:13px;
+  }
+  .colbar.show { display:flex; }
+  .colbar b { color:var(--gold2); }
+  .colbar .del {
+    margin-left:auto; cursor:pointer; font-size:13px; font-family:inherit;
+    background:rgba(60,24,24,.6); color:#e8a0a0; border:1px solid #6b3030;
+    padding:6px 14px; border-radius:999px; transition:all .15s;
+  }
+  .colbar .del:hover { background:#5a2424; color:#ffd0d0; }
+
   main { max-width:1240px; margin:0 auto; padding:28px 24px 60px; }
+  .view { display:none; }
+  .view.on { display:block; }
 
   /* 侧边信息框 */
   .info {
@@ -75,6 +115,15 @@
     position:absolute; top:8px; left:8px; z-index:2;
     font-size:11px; font-weight:700; border-radius:999px; padding:2px 10px; letter-spacing:1px;
   }
+  .card .colbtn {
+    position:absolute; top:8px; right:8px; z-index:3;
+    width:28px; height:28px; border-radius:50%; cursor:pointer;
+    background:rgba(20,12,8,.8); border:1px solid var(--line); color:var(--gold2);
+    font-size:13px; line-height:1; display:flex; align-items:center; justify-content:center;
+    transition:all .15s;
+  }
+  .card .colbtn:hover { border-color:var(--gold); background:rgba(60,44,20,.95); }
+  .card .colbtn.member { border-color:var(--gold); background:rgba(90,66,24,.9); }
   .card .name {
     margin-top:8px; text-align:center; font-size:13px; color:var(--muted);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -92,6 +141,64 @@
     background-size:400% 100%; animation: rainbow 3s linear infinite; color:#1a1205;
   }
   @keyframes rainbow { to { background-position:400% 0; } }
+
+  /* 素材包分页 */
+  .matcat { margin-bottom:26px; }
+  .matcat h3 {
+    font-size:15px; color:var(--gold2); margin-bottom:12px; font-weight:600;
+    display:flex; align-items:baseline; gap:8px;
+  }
+  .matcat h3 .n { font-size:12px; color:var(--muted); font-weight:400; }
+  .chips { display:flex; flex-wrap:wrap; gap:10px; }
+  .chip {
+    font-size:13px; color:var(--gold2); background:var(--panel);
+    border:1px solid var(--line); border-radius:999px; padding:6px 15px;
+  }
+  .chip.glow { border-color:#6b5a2a; }
+  .matempty { color:var(--muted); font-size:13px; }
+
+  /* 收藏集弹窗 */
+  .pop {
+    position:fixed; inset:0; z-index:45; display:none;
+    background: rgba(8,6,4,.82); backdrop-filter: blur(6px);
+    align-items:center; justify-content:center; padding:24px;
+  }
+  .pop.show { display:flex; }
+  .pop .box {
+    width:min(420px, 94vw); max-height:86vh; overflow-y:auto;
+    background:var(--panel); border:1px solid var(--gold); border-radius:16px;
+    padding:22px; box-shadow:0 20px 80px rgba(0,0,0,.7);
+  }
+  .pop h3 { color:var(--gold2); font-size:16px; margin-bottom:4px; }
+  .pop .sub { color:var(--muted); font-size:12px; margin-bottom:16px; }
+  .poprow {
+    display:flex; align-items:center; gap:10px; cursor:pointer;
+    padding:10px 12px; border:1px solid var(--line); border-radius:10px;
+    margin-bottom:8px; font-size:14px; transition:all .15s;
+  }
+  .poprow:hover { border-color:var(--gold); background:#2c231a; }
+  .poprow input { width:17px; height:17px; accent-color:var(--gold); cursor:pointer; }
+  .poprow .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .poprow .ct { color:var(--muted); font-size:12px; }
+  .pop .newline { display:flex; gap:8px; margin-top:14px; }
+  .pop .newline input {
+    flex:1; background:#1b1510; border:1px solid var(--line); border-radius:10px;
+    color:var(--text); padding:9px 12px; font-size:13px; font-family:inherit;
+  }
+  .pop .newline input:focus { outline:none; border-color:var(--gold); }
+  .pop .newline button {
+    cursor:pointer; font-family:inherit; font-size:13px; padding:9px 16px;
+    border-radius:10px; border:1px solid var(--gold); color:#2b1d08;
+    background:linear-gradient(135deg,var(--gold2),var(--gold)); white-space:nowrap;
+  }
+  .pop .done {
+    width:100%; margin-top:16px; cursor:pointer; font-family:inherit; font-size:14px;
+    padding:10px; border-radius:10px; background:rgba(34,27,22,.9);
+    color:var(--gold2); border:1px solid var(--line);
+  }
+  .pop .done:hover { border-color:var(--gold); }
+  .pop .tip { color:var(--muted); font-size:12px; margin-top:10px; min-height:16px; }
+  .pop .tip.err { color:#e8a0a0; }
 
   /* 放大弹窗 */
   .modal {
@@ -149,9 +256,21 @@
   <span class="count" id="count"></span>
   <a class="back" href="/market">🏪 卡牌市场 →</a>
 </header>
+
+<div class="tabs" id="tabs"></div>
+<div class="colbar" id="colbar">
+  <span>收藏集：<b id="colbarName"></b></span>
+  <button class="del" id="colDel">🗑️ 删除该收藏集</button>
+</div>
+
 <main>
-  <div class="grid" id="grid"></div>
-  <div class="empty" id="empty" style="display:none">还没有卡牌喵～ 回 QQ 引用图片发「卡牌制作 卡名」做一张吧</div>
+  <div class="view on" id="view-all">
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none">还没有卡牌喵～ 回 QQ 引用图片发「卡牌制作 卡名」做一张吧</div>
+  </div>
+  <div class="view" id="view-materials">
+    <div id="matBox"></div>
+  </div>
 </main>
 
 <aside class="info" id="info">
@@ -163,6 +282,21 @@
   <div class="desc" id="infoDesc"></div>
   <div class="meta" id="infoMeta"></div>
 </aside>
+
+<!-- 收藏集管理弹窗 -->
+<div class="pop" id="pop">
+  <div class="box">
+    <h3>🗂️ 收藏「<span id="popCardName"></span>」</h3>
+    <div class="sub">勾选即加入对应收藏集，取消勾选即移出</div>
+    <div id="popList"></div>
+    <div class="newline">
+      <input id="popNewName" maxlength="12" placeholder="新建收藏集昵称">
+      <button id="popNewBtn">新建并加入</button>
+    </div>
+    <div class="tip" id="popTip"></div>
+    <button class="done" id="popDone">完成</button>
+  </div>
+</div>
 
 <div class="modal" id="modal">
   <button class="close" id="modalClose">✕</button>
@@ -186,10 +320,16 @@ const RARITY = {
   '金': { cls: 'r-jin', label: '🥇 金' },
   '虹': { cls: 'r-hong',label: '🌈 虹' },
 };
+const USER_KEY = location.pathname.split('/').filter(Boolean)[1] || '';
 const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
 const info = document.getElementById('info');
+const tabs = document.getElementById('tabs');
+const colbar = document.getElementById('colbar');
 let allCards = [];
+let byKey = {};
+let collections = [];
+let activeView = 'all';        // 'all' | 'materials' | 'col:<cid>'
 let currentCard = null;
 let spinning = false;
 
@@ -200,25 +340,114 @@ function badge(c) {
   const r = RARITY[c.rarity] || RARITY['铜'];
   return '<span class="rarity ' + r.cls + '">' + r.label + '</span>';
 }
+function activeCid() {
+  return activeView.startsWith('col:') ? activeView.slice(4) : null;
+}
+function cardInAnyCollection(key) {
+  return collections.some(c => c.cards.indexOf(key) >= 0);
+}
 
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  return await r.json();
+}
+
+// ---------- 加载 ----------
 async function load() {
-  const key = location.pathname.split('/').filter(Boolean)[1] || '';
   try {
-    const r = await fetch('/api/album/' + encodeURIComponent(key));
-    const d = await r.json();
+    const d = await api('/api/album/' + encodeURIComponent(USER_KEY));
     if (d.ok) allCards = d.cards || [];
   } catch (e) { allCards = []; }
-  document.getElementById('count').textContent =
-    allCards.length ? '共 ' + allCards.length + ' 张' : '';
+  byKey = {};
+  allCards.forEach(c => { byKey[c.cardKey] = c; });
+  await loadCollections();
+  renderTabs();
+  renderGrid();
+}
+
+async function loadCollections() {
+  try {
+    const d = await api('/api/album/' + encodeURIComponent(USER_KEY) + '/collections');
+    if (d.ok) collections = d.collections || [];
+  } catch (e) { collections = []; }
+}
+
+// ---------- 标签栏 ----------
+function renderTabs() {
+  tabs.innerHTML = '';
+  const all = mkTab('all', '🗂️ 全部', allCards.length);
+  all.classList.add('on');
+  activeView === 'all' && all.classList.add('on');
+  tabs.appendChild(all);
+  collections.forEach(c => {
+    const b = mkTab('col:' + c.cid, '📁 ' + c.name, c.cards.length);
+    b.classList.add('col');
+    if (activeView === 'col:' + c.cid) b.classList.add('on');
+    tabs.appendChild(b);
+  });
+  tabs.appendChild(mkTab('new', '＋ 新建收藏集', null, 'new'));
+  tabs.appendChild(mkTab('materials', '🎨 素材包', null));
+  // 修正「全部」高亮：仅当 activeView 为 all
+  Array.prototype.forEach.call(tabs.children, el => {
+    el.classList.toggle('on', el.dataset.view === activeView);
+  });
+  // 收藏集操作条
+  const cid = activeCid();
+  if (cid) {
+    const c = collections.find(x => x.cid === cid);
+    document.getElementById('colbarName').textContent = c ? c.name : '';
+    colbar.classList.add('show');
+  } else {
+    colbar.classList.remove('show');
+  }
+}
+
+function mkTab(view, label, n, extra) {
+  const b = document.createElement('button');
+  b.dataset.view = view;
+  if (extra) b.classList.add(extra);
+  b.innerHTML = esc(label) + (n != null ? '<span class="n">' + n + '</span>' : '');
+  b.addEventListener('click', () => {
+    if (view === 'new') { openPop(null); return; }
+    activeView = view;
+    renderTabs();
+    renderGrid();
+    if (view === 'materials') loadMaterials();
+  });
+  return b;
+}
+
+// ---------- 卡片网格 ----------
+function renderGrid() {
+  const cid = activeCid();
+  let list = allCards;
+  if (cid) {
+    const c = collections.find(x => x.cid === cid);
+    const keys = c ? c.cards : [];
+    list = keys.map(k => byKey[k]).filter(Boolean);
+  }
+  document.getElementById('view-all').classList.toggle('on', activeView !== 'materials');
+  document.getElementById('view-materials').classList.toggle('on', activeView === 'materials');
+
+  document.getElementById('count').textContent = allCards.length ? '共 ' + allCards.length + ' 张' : '';
   grid.innerHTML = '';
-  empty.style.display = allCards.length ? 'none' : 'block';
-  allCards.forEach(c => grid.appendChild(makeCard(c)));
+  empty.style.display = list.length ? 'none' : 'block';
+  if (activeView === 'materials') return;
+  if (cid) {
+    const c = collections.find(x => x.cid === cid);
+    empty.textContent = '这个收藏集还是空的喵～ 点卡片右上角 🗂️ 把卡加进来吧';
+  } else {
+    empty.textContent = '还没有卡牌喵～ 回 QQ 引用图片发「卡牌制作 卡名」做一张吧';
+  }
+  list.forEach(c => grid.appendChild(makeCard(c)));
 }
 
 function makeCard(c) {
   const wrap = document.createElement('div');
   wrap.className = 'card';
+  const member = cardInAnyCollection(c.cardKey);
   wrap.innerHTML = '<div class="inner"><div class="thumbwrap">' + badge(c) +
+    '<button class="colbtn' + (member ? ' member' : '') + '" title="加入/移出收藏集">🗂️</button>' +
     '<img src="' + esc(c.card_png) + '" alt="" loading="lazy"></div>' +
     '<div class="name">' + esc(c.name) + '</div>' +
     '<div class="price">价值 ' + esc(c.price) + ' 喵币' +
@@ -234,6 +463,10 @@ function makeCard(c) {
   wrap.addEventListener('mouseenter', () => showInfo(c));
   wrap.addEventListener('mouseleave', () => info.classList.remove('show'));
   wrap.addEventListener('click', () => openModal(c));
+  wrap.querySelector('.colbtn').addEventListener('click', e => {
+    e.stopPropagation();
+    openPop(c);
+  });
   return wrap;
 }
 
@@ -250,12 +483,136 @@ function showInfo(c) {
   const desc = document.getElementById('infoDesc');
   if (c.desc) { desc.textContent = c.desc; desc.classList.remove('empty'); }
   else { desc.textContent = '（这张卡还没有描述文字）'; desc.classList.add('empty'); }
+  const inCols = collections.filter(x => x.cards.indexOf(c.cardKey) >= 0).map(x => x.name);
   document.getElementById('infoMeta').innerHTML =
     '<b>卡牌 ID</b>　' + esc(c.cardKey) + '<br><b>类型</b>　' +
-    ({ none:'无文本型', transparent:'特殊文本型', boxed:'文本型' }[c.text_type] || c.text_type);
+    ({ none:'无文本型', transparent:'特殊文本型', boxed:'文本型' }[c.text_type] || c.text_type) +
+    '<br><b>收藏集</b>　' + (inCols.length ? esc(inCols.join('、')) : '未收藏');
   info.classList.add('show');
 }
 
+// ---------- 收藏集弹窗 ----------
+const pop = document.getElementById('pop');
+let popCard = null;
+
+function openPop(card) {
+  popCard = card;
+  document.getElementById('popCardName').textContent = card ? card.name : '（新收藏集）';
+  document.getElementById('popNewName').value = '';
+  setPopTip('');
+  renderPopList();
+  pop.classList.add('show');
+}
+
+function setPopTip(msg, err) {
+  const t = document.getElementById('popTip');
+  t.textContent = msg || '';
+  t.classList.toggle('err', !!err);
+}
+
+function renderPopList() {
+  const box = document.getElementById('popList');
+  box.innerHTML = '';
+  if (!collections.length) {
+    box.innerHTML = '<div class="matempty" style="margin-bottom:8px">还没有收藏集，先在下面新建一个吧</div>';
+  }
+  collections.forEach(c => {
+    const has = popCard ? c.cards.indexOf(popCard.cardKey) >= 0 : false;
+    const row = document.createElement('label');
+    row.className = 'poprow';
+    row.innerHTML = '<input type="checkbox"' + (has ? ' checked' : '') +
+      (popCard ? '' : ' disabled') + '><span class="nm">' + esc(c.name) +
+      '</span><span class="ct">' + c.cards.length + ' 张</span>';
+    if (popCard) {
+      row.querySelector('input').addEventListener('change', async e => {
+        const on = e.target.checked;
+        const d = await api('/api/album/' + encodeURIComponent(USER_KEY) + '/collection', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: on ? 'add' : 'remove', cid: c.cid, cardKey: popCard.cardKey })
+        });
+        if (!d.ok) { setPopTip(d.msg || '操作失败', true); e.target.checked = !on; return; }
+        setPopTip(on ? '已加入「' + c.name + '」' : '已移出「' + c.name + '」');
+        await loadCollections();
+        renderTabs();
+        renderGrid();
+        renderPopList();
+      });
+    }
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('popNewBtn').addEventListener('click', async () => {
+  const name = document.getElementById('popNewName').value.trim();
+  if (!name) { setPopTip('请先输入收藏集昵称', true); return; }
+  const d = await api('/api/album/' + encodeURIComponent(USER_KEY) + '/collection', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'create', name })
+  });
+  if (!d.ok) { setPopTip(d.msg || '创建失败', true); return; }
+  if (popCard) {
+    await api('/api/album/' + encodeURIComponent(USER_KEY) + '/collection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', cid: d.cid, cardKey: popCard.cardKey })
+    });
+  }
+  document.getElementById('popNewName').value = '';
+  await loadCollections();
+  renderTabs();
+  renderGrid();
+  renderPopList();
+  setPopTip('已创建「' + name + '」' + (popCard ? '并加入' : ''));
+});
+document.getElementById('popDone').addEventListener('click', () => pop.classList.remove('show'));
+pop.addEventListener('click', e => { if (e.target === e.currentTarget) pop.classList.remove('show'); });
+
+document.getElementById('colDel').addEventListener('click', async () => {
+  const cid = activeCid();
+  const c = collections.find(x => x.cid === cid);
+  if (!c) return;
+  if (!confirm('确定删除收藏集「' + c.name + '」吗？（卡牌本身不会被删除）')) return;
+  const d = await api('/api/album/' + encodeURIComponent(USER_KEY) + '/collection', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete', cid })
+  });
+  if (!d.ok) return;
+  activeView = 'all';
+  await loadCollections();
+  renderTabs();
+  renderGrid();
+});
+
+// ---------- 素材包分页 ----------
+let materialsLoaded = false;
+async function loadMaterials() {
+  if (materialsLoaded) return;
+  materialsLoaded = true;
+  const box = document.getElementById('matBox');
+  box.innerHTML = '<div class="matempty">加载中…</div>';
+  let cats = [];
+  try {
+    const d = await api('/api/album/' + encodeURIComponent(USER_KEY) + '/materials');
+    if (d.ok) cats = d.cats || [];
+  } catch (e) {}
+  box.innerHTML = '';
+  const total = cats.reduce((s, c) => s + c.items.length, 0);
+  if (!total) {
+    box.innerHTML = '<div class="matempty">还没有解锁任何素材喵～ 回 QQ 发「素材包」查看可买素材</div>';
+    return;
+  }
+  cats.forEach(cat => {
+    const sec = document.createElement('div');
+    sec.className = 'matcat';
+    const chips = cat.items.length
+      ? cat.items.map(n => '<span class="chip' + (cat.cat === 'glow' ? ' glow' : '') + '">' + esc(n) + '</span>').join('')
+      : '<span class="matempty">未解锁</span>';
+    sec.innerHTML = '<h3>' + esc(cat.cn) + '<span class="n">已解锁 ' + cat.items.length + ' 种</span></h3>' +
+      '<div class="chips">' + chips + '</div>';
+    box.appendChild(sec);
+  });
+}
+
+// ---------- 放大弹窗 ----------
 function openModal(c) {
   currentCard = c;
   const frame = document.getElementById('modalFrame');
@@ -303,7 +660,9 @@ document.getElementById('modalSpin').addEventListener('click', () => {
 });
 document.getElementById('modalClose').addEventListener('click', closeModal);
 document.getElementById('modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); info.classList.remove('show'); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal(); info.classList.remove('show'); pop.classList.remove('show'); }
+});
 
 load();
 </script>

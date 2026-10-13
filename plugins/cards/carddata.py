@@ -60,7 +60,7 @@ def _load() -> dict:
                     return data
         except Exception:
             pass
-    return {"albums": {}, "cards": {}, "market": {}, "materials": {}}
+    return {"albums": {}, "cards": {}, "market": {}, "materials": {}, "collections": {}}
 
 
 def _save(data: dict):
@@ -197,12 +197,13 @@ def has_card_named(openid, name) -> bool:
 
 
 def remove_card(card_key) -> bool:
-    """删除卡牌记录与网页资产（无补偿）。已挂市场的单子一并取消。"""
+    """删除卡牌记录与网页资产（无补偿）。已挂市场的单子、各收藏集里的引用一并清除。"""
     with _lock:
         data = _load()
         c = data["cards"].pop(card_key, None)
         data["market"].pop(card_key, None)
         if c:
+            _purge_from_collections(data, c.get("owner", ""), card_key)
             _save(data)
     if c:
         shutil.rmtree(os.path.join(_ASSETS_DIR, card_key), ignore_errors=True)
@@ -356,3 +357,83 @@ def get_cooldown(openid) -> int:
     with _lock:
         data = _load()
         return int(data.get("cooldowns", {}).get(str(openid), 0))
+
+
+# ---------- 收藏集（收集册自定义分类） ----------
+
+COLLECTION_MAX = 30       # 每人最多收藏集数
+COLLECTION_NAME_MAX = 12  # 收藏集昵称最长字数
+
+
+def _purge_from_collections(data: dict, openid, card_key):
+    """把一张卡从该用户所有收藏集中移除（调用方需已持有 _lock）。"""
+    rec = data.get("collections", {}).get(str(openid), {})
+    for c in rec.values():
+        cards = c.get("cards")
+        if cards and card_key in cards:
+            cards.remove(card_key)
+
+
+def list_collections(openid) -> list:
+    """用户的收藏集：[{cid, name, cards:[cardKey]}]，按创建时间升序。"""
+    with _lock:
+        data = _load()
+        rec = data.get("collections", {}).get(str(openid), {})
+        out = [{"cid": cid, "name": c.get("name", ""),
+                "cards": list(c.get("cards", [])),
+                "_t": int(c.get("created", 0))}
+               for cid, c in rec.items()]
+    out.sort(key=lambda c: c.pop("_t"))
+    return out
+
+
+def create_collection(openid, name) -> tuple:
+    """新建收藏集，返回 (cid, 错误信息)；成功时错误信息为空串。"""
+    name = (name or "").strip()
+    if not name:
+        return None, "收藏集昵称不能为空喵"
+    if len(name) > COLLECTION_NAME_MAX:
+        return None, f"收藏集昵称最多 {COLLECTION_NAME_MAX} 个字喵"
+    with _lock:
+        data = _load()
+        rec = data.setdefault("collections", {}).setdefault(str(openid), {})
+        if len(rec) >= COLLECTION_MAX:
+            return None, f"最多只能建 {COLLECTION_MAX} 个收藏集喵"
+        if any(c.get("name") == name for c in rec.values()):
+            return None, "已经有同名收藏集了喵"
+        cid = secrets.token_hex(4)
+        rec[cid] = {"name": name, "cards": [], "created": int(time.time())}
+        _save(data)
+    return cid, ""
+
+
+def delete_collection(openid, cid) -> bool:
+    with _lock:
+        data = _load()
+        rec = data.get("collections", {}).get(str(openid), {})
+        if not cid or cid not in rec:
+            return False
+        rec.pop(cid)
+        _save(data)
+        return True
+
+
+def set_collection_card(openid, cid, card_key, add: bool) -> bool:
+    """把一张卡加入/移出收藏集（卡必须属于该用户）。"""
+    with _lock:
+        data = _load()
+        rec = data.get("collections", {}).get(str(openid), {})
+        c = rec.get(cid)
+        if not c:
+            return False
+        card = data["cards"].get(card_key)
+        if not card or card.get("owner") != str(openid):
+            return False
+        cards = c.setdefault("cards", [])
+        if add:
+            if card_key not in cards:
+                cards.append(card_key)
+        elif card_key in cards:
+            cards.remove(card_key)
+        _save(data)
+        return True

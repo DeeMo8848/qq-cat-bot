@@ -197,6 +197,59 @@ async def _api_materials(request: web.Request):
     return web.json_response({"ok": True, "cats": cats})
 
 
+async def _api_album_collections(request: web.Request):
+    """收集册的收藏集清单。"""
+    from plugins.cards import carddata as cd
+    oid = cd.openid_by_key(request.match_info["key"])
+    if not oid:
+        return web.json_response({"ok": False, "msg": "not found"})
+    return web.json_response({"ok": True, "collections": cd.list_collections(oid)})
+
+
+async def _api_album_collection_op(request: web.Request):
+    """收藏集增删改：POST JSON {action: create|delete|add|remove, ...}。
+
+    以收集册 userKey 为凭据（与浏览同一信任模型：拿到链接即可管理自己的收藏集）。
+    """
+    from plugins.cards import carddata as cd
+    oid = cd.openid_by_key(request.match_info["key"])
+    if not oid:
+        return web.json_response({"ok": False, "msg": "not found"})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    action = str(body.get("action") or "").strip()
+    if action == "create":
+        cid, err = cd.create_collection(oid, body.get("name"))
+        if err:
+            return web.json_response({"ok": False, "msg": err})
+        return web.json_response({"ok": True, "cid": cid, "msg": "已创建"})
+    if action == "delete":
+        ok = cd.delete_collection(oid, str(body.get("cid") or ""))
+        return web.json_response({"ok": ok, "msg": "已删除" if ok else "收藏集不存在"})
+    if action in ("add", "remove"):
+        ok = cd.set_collection_card(oid, str(body.get("cid") or ""),
+                                    str(body.get("cardKey") or ""), action == "add")
+        return web.json_response({"ok": ok, "msg": "ok" if ok else "操作失败"})
+    return web.json_response({"ok": False, "msg": "未知操作"})
+
+
+async def _api_album_materials(request: web.Request):
+    """用户在收集册「素材包」分页可见的已解锁素材（按类型分组）。"""
+    from plugins.cards import carddata as cd
+    oid = cd.openid_by_key(request.match_info["key"])
+    if not oid:
+        return web.json_response({"ok": False, "msg": "not found"})
+    owned = cd.own_materials(oid)
+    cats = [{"cat": cat, "cn": _CAT_CN.get(cat, cat),
+             "items": list(owned.get(cat, []))}
+            for cat in ("background", "frame", "seal", "back", "glow")]
+    return web.json_response({"ok": True, "cats": cats})
+
+
 # ---------- 鱼缸页面 ----------
 
 _AQUA_WEB_DIR = os.path.join(PUBLIC_DIR, "aquarium")
@@ -297,6 +350,9 @@ async def start_static(port: int = STATIC_PORT):
     app.router.add_get("/mimg/{cat}/{file}", _material_img)
     app.router.add_get("/api/card/{key}", _api_card)
     app.router.add_get("/api/album/{key}", _api_album)
+    app.router.add_get("/api/album/{key}/collections", _api_album_collections)
+    app.router.add_post("/api/album/{key}/collection", _api_album_collection_op)
+    app.router.add_get("/api/album/{key}/materials", _api_album_materials)
     app.router.add_get("/api/market", _api_market)
     app.router.add_get("/api/materials", _api_materials)
     app.router.add_get("/aquarium/{key}", _aquarium_page)
