@@ -9,10 +9,14 @@ QQ 端很多表情 PE 上无法直接长按保存；用本命令让机器人把�
   下载图片 / 下载表情     —— 需当前消息引用/回复了带图的消息（或直接带图）
 """
 
+import asyncio
+import ipaddress
 import logging
 import os
 import re
+import socket
 import time
+import urllib.parse
 import uuid
 
 import aiohttp
@@ -77,7 +81,43 @@ def _deep_image_urls(message):
     return urls
 
 
+def _host_is_public(url):
+    """SSRF 防护：只放行「解析后确实是公网地址」的 http(s) URL。
+
+    ★ 安全（2026-10-16 实网被探测后补）：本命令会去 GET 消息里带来的任意 URL，
+      等于给了外人一个「让服务器帮我发请求」的通道 —— 实测对方就是拿它
+      打 dnslog / webhook.site 做带外回连探测。
+      这里挡掉：非 http(s)、解析失败、以及私网/回环/链路本地（含云厂商
+      metadata 169.254.169.254）/组播/保留地址。
+    """
+    try:
+        p = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if p.scheme not in ("http", "https"):
+        return False
+    host = p.hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, p.port or (443 if p.scheme == "https" else 80))
+    except Exception:
+        return False
+    for _fam, _type, _proto, _canon, addr in infos:
+        try:
+            ip = ipaddress.ip_address(addr[0])
+        except Exception:
+            return False
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return True
+
+
 async def _fetch_bytes(url):
+    if not await asyncio.to_thread(_host_is_public, url):
+        # 只记日志不回复：正常用户几乎不会命中，回复反而变成探测者的回显通道
+        _log.warning("[downloadimg] 已拒绝非公网 URL: %r", url)
+        return None
     try:
         async with aiohttp.ClientSession(headers=_BROWSER_HDRS) as s:
             async with s.get(url, timeout=_TIMEOUT, ssl=False) as r:

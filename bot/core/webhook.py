@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -15,7 +16,8 @@ import time
 
 from aiohttp import web
 
-from config import SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT, WEBHOOK_BIND
+from config import (SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT,
+                    WEBHOOK_BIND, WEBHOOK_SIGNATURE)
 from bot import commands
 from bot.core import state
 from plugins.meme import is_meme as meme_is_meme
@@ -146,6 +148,29 @@ def _sign(seed: bytes, msg: bytes) -> str:
     return priv.sign(msg).hex()
 
 
+def _verify_event_signature(sig_hex: str, ts: str, body: bytes) -> bool:
+    """校验单条事件回调的 ed25519 签名。
+
+    ★ 安全（2026-10-16 实网被伪造事件打穿后补）：
+      官方只要求「回调地址验证」（op=13），**事件回调(op=0)本身不带任何身份凭证**，
+      于是任何知道回调 URL 的人都能 POST 一个假事件，随意填 openid ——
+      实测对方就是这么伪造出 `0DEADBEEF...` 这类 openid、并借管理员 openid
+      让 bot 把执行结果私聊发给真正的管理员。
+      官方每条事件带 `X-Signature-Ed25519` + `X-Signature-Timestamp` 头，
+      签名内容 = timestamp + 原始 body，密钥种子同 op=13（botSecret）。
+    """
+    if not sig_hex or not ts:
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        priv = Ed25519PrivateKey.from_private_bytes(_ed25519_seed(SECRET))
+        priv.public_key().verify(bytes.fromhex(sig_hex), ts.encode("utf-8") + body)
+        return True
+    except Exception:
+        return False
+
+
 class WebhookServer:
     def __init__(self, api, port: int = WEBHOOK_PORT):
         self.api = api
@@ -157,6 +182,8 @@ class WebhookServer:
         self.app.router.add_get("/media/{filename}", self.serve_media)
         # 同一 msg_id 的重复回调去重：保留最近处理过的 id 和时刻
         self._seen_msgs: dict[str, float] = {}
+        # 事件签名校验统计（用于灰度期确认算法对不对：ok 涨说明官方回调能验过）
+        self._sig_stat: dict[str, int] = {"ok": 0, "bad": 0}
 
     async def ping(self, request):
         return web.Response(text="webhook ok")
@@ -172,12 +199,32 @@ class WebhookServer:
         return web.FileResponse(path)
 
     async def handle(self, request):
+        raw = await request.read()
         try:
-            payload = await request.json()
+            payload = json.loads(raw.decode("utf-8"))
         except Exception:
             return web.Response(status=400, text="bad json")
 
         op = payload.get("op")
+        if op == 0 and WEBHOOK_SIGNATURE != "off":
+            ok = _verify_event_signature(
+                request.headers.get("X-Signature-Ed25519", ""),
+                request.headers.get("X-Signature-Timestamp", ""),
+                raw,
+            )
+            key = "ok" if ok else "bad"
+            self._sig_stat[key] += 1
+            n = self._sig_stat[key]
+            if n <= 3 or n % 50 == 0:
+                _log.warning(
+                    "[webhook] 事件签名%s 第%d次 (ok=%d bad=%d) mode=%s ua=%r ip=%s",
+                    "通过" if ok else "失败", n, self._sig_stat["ok"],
+                    self._sig_stat["bad"], WEBHOOK_SIGNATURE,
+                    request.headers.get("User-Agent"), request.remote,
+                )
+            if not ok and WEBHOOK_SIGNATURE == "on":
+                return web.Response(status=401, text="bad signature")
+
         if op == 13:  # 回调地址验证
             return await self._verify(payload)
         if op == 0:  # 事件分发

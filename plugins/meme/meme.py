@@ -10,6 +10,7 @@
 
 import os
 import re
+import shlex
 import time
 import json
 import random
@@ -475,11 +476,15 @@ async def _make(ctx, key, raw_text):
             return
 
         outbase = os.path.join(workdir, "out")
-        cmd = f'"{PY_EXE}" "{WORKER}" --key "{key}" --out "{outbase}"'
+        # ★ 安全（2026-10-16）：run_script 走 shell=True，texts 来自用户消息，
+        #   直接拼进 --text "..." 时可用 ";cmd" / "$(cmd)" 逃逸出命令行。
+        #   一律用 shlex.quote 转义，用户输入永远只被当作一个参数。
+        cmd = " ".join([shlex.quote(PY_EXE), shlex.quote(WORKER),
+                        "--key", shlex.quote(key), "--out", shlex.quote(outbase)])
         for p in images:
-            cmd += f' --image "{p}"'
+            cmd += " --image " + shlex.quote(p)
         for t in texts:
-            cmd += f' --text "{t}"'
+            cmd += " --text " + shlex.quote(t)
         out, err_out, code = await tools.run_script(cmd, timeout=120)
 
         res = None

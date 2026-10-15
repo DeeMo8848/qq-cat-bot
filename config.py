@@ -75,6 +75,14 @@ MENU_KEYWORDS = _cfg("MENU_KEYWORDS", ["菜单", "帮助", "功能", "help"])
 WEBUI_PORT = int(_cfg("WEBUI_PORT", 9090))
 WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 
+# 事件回调(op=0)的 ed25519 签名校验模式。官方只强制「回调地址验证」(op=13)，
+# 事件本身不带凭证 ⇒ 知道回调 URL 的人可伪造任意事件（任意 openid、任意内容）。
+#   off = 不校验（旧行为，仅调试用）
+#   log = 校验但只记日志、不拦截（灰度用，用来确认算法对不对）
+#   on  = 校验失败直接 401（正式防护）
+# ★ 上线前务必先用 log 跑一轮：日志里 ok 计数在涨说明官方回调能验过，再切 on。
+WEBHOOK_SIGNATURE = str(_cfg("WEBHOOK_SIGNATURE", "log")).strip().lower()
+
 # WebUI 访问密码。留空 = 不启用登录（默认），仅在绑定回环地址时安全；
 # 只要 WEBUI 暴露到公网（WEBUI_BIND=0.0.0.0 或经 nginx 反代公开），就必须设置，
 # 否则任何人都能开关插件、改配置、操作玩家数据，甚至关闭机器人。
