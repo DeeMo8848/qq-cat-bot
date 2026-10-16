@@ -83,6 +83,22 @@ WEBHOOK_PORT = int(_cfg("WEBHOOK_PORT", 9091))
 # ★ 上线前务必先用 log 跑一轮：日志里 ok 计数在涨说明官方回调能验过，再切 on。
 WEBHOOK_SIGNATURE = str(_cfg("WEBHOOK_SIGNATURE", "log")).strip().lower()
 
+# 回调的 User-Agent 白名单（**辅助**防护，不能单独依赖）。
+#   off = 不检查 / log = 只记日志不拦截（灰度）/ on = 不在白名单直接 403
+# ★ UA 可以伪造（`curl -A "QQBot-Callback"`），挡不住知道门道的攻击者；
+#   但它能干净地挡掉扫段的笨扫描器 —— 2026-10-16 那个来源用的正是
+#   Python-urllib/3.12、curl/7.88.1 和空 UA，全在这一档。
+# ★ 真正的防线是上面的 WEBHOOK_SIGNATURE。这条只是多垫一层。
+# ★ 切 on 前先用 log 跑一轮：日志里「UA 拦截」若出现官方 UA，说明会误伤，别切。
+WEBHOOK_UA_MODE = str(_cfg("WEBHOOK_UA_MODE", "log")).strip().lower()
+WEBHOOK_UA_ALLOW = _cfg("WEBHOOK_UA_ALLOW", "QQBot-Callback")
+
+# scene 判据：真实 C2C 事件带 scene={'source':'default','ext':[...]}，
+# 2026-10-16 抓到的伪造事件一律 scene=None。同样 off / log / on 三档。
+# ★ 只对**私聊(c2c)**生效：群聊事件的 scene 本身就可能为 None，全局启用会误伤。
+# ★ 这是观察到的经验规律，不是官方承诺 ⇒ 只当辅助，别当唯一依据。
+WEBHOOK_SCENE_MODE = str(_cfg("WEBHOOK_SCENE_MODE", "log")).strip().lower()
+
 # WebUI 访问密码。留空 = 不启用登录（默认），仅在绑定回环地址时安全；
 # 只要 WEBUI 暴露到公网（WEBUI_BIND=0.0.0.0 或经 nginx 反代公开），就必须设置，
 # 否则任何人都能开关插件、改配置、操作玩家数据，甚至关闭机器人。

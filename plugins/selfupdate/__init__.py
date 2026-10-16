@@ -14,10 +14,18 @@
     Windows: os._exit 退出，由「启动bot.bat」的循环 / 守护脚本拉起
 
 安全设计：
-    · 只允许管理员与协助者触发（role=ROLE_ASSISTANT）
+    · 只允许管理员触发（role=ROLE_ADMIN，2026-10-16 从 ASSISTANT 收紧）
+    · 群聊里必须 @ 机器人（单聊放行）
     · 更新前自动备份当前 commit hash，pull 失败可回滚提示
     · pull 冲突时中止并报告，不强行覆盖本地修改
     · 触发后先回复再重启，保证用户能看到结果
+
+★ 为什么要收紧到 ROLE_ADMIN（2026-10-16 实网事件）：
+    webhook 事件回调本身不带身份凭证，攻击者可以 POST 假事件并**任意填 openid**，
+    于是能冒充协助者触发更新/重启。★「强制更新」尤其危险 —— 它会
+    `git add -A` + `git reset --hard origin/main`，把服务器上未入库的改动直接抹掉，
+    且它不含 `; & |` 等元字符，命令注入那道拦截**拦不住它**。
+    ★ 但收紧权限只是「缩小受影响的人」，真正堵住伪造事件的是 WEBHOOK_SIGNATURE。
 """
 
 import asyncio
@@ -29,7 +37,7 @@ import time
 
 from config import ROOT, PYTHON
 
-from bot.commands import register, ROLE_ASSISTANT
+from bot.commands import register, ROLE_ADMIN, at_ok
 from bot.core import platform as _plat
 
 # 重启延迟：留出时间让「更新完成」的消息送达 QQ
@@ -136,12 +144,14 @@ async def _delayed_restart(ctx):
 
 @register(
     keywords=["bot更新", "喵喵更新", "更新bot", "bot upgrade"],
-    help="从 GitHub 拉取最新代码并重启（仅管理员/协助者）",
-    role=ROLE_ASSISTANT,
+    help="从 GitHub 拉取最新代码并重启（仅管理员，群内需 @）",
+    role=ROLE_ADMIN,
     exact=True,
 )
 async def cmd_bot_update(ctx):
     """检查并应用 GitHub 上的更新，然后自动重启。"""
+    if not at_ok(ctx):
+        return  # 群里没 @ 就完全静默：避免旁人随手四个字把 bot 重启了
     if not _is_git_repo():
         await ctx.reply_text(
             "呜…当前目录不是 git 仓库，没法自动更新喵。\n"
@@ -245,7 +255,7 @@ async def cmd_bot_update(ctx):
 @register(
     keywords=["强制更新", "提交并更新", "bot强制更新", "强制bot更新"],
     help="把本机改动先归档成 commit，再强制对齐 GitHub 最新代码并重启",
-    role=ROLE_ASSISTANT,
+    role=ROLE_ADMIN,
     exact=True,
 )
 async def cmd_bot_update_force(ctx):
@@ -261,6 +271,8 @@ async def cmd_bot_update_force(ctx):
       要找回用 `git checkout <快照sha> -- <文件>`。
       .gitignore 里的东西（settings.json、data/、插件大素材）不受影响。
     """
+    if not at_ok(ctx):
+        return  # 群里没 @ 就完全静默：这条会 reset --hard，更不能让别人随手触发
     if not _is_git_repo():
         await ctx.reply_text("呜…当前目录不是 git 仓库，没法强制更新喵。")
         return

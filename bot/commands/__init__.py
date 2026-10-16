@@ -42,6 +42,19 @@ ROLE_ASSISTANT = "assistant"  # 管理员 + 协助者
 ROLE_ADMIN = "admin"      # 仅管理员
 
 
+def at_ok(ctx):
+    """群聊里这条消息有没有「@ 机器人」。单聊恒为 True。
+
+    ★ 安全（2026-10-16 伪造事件打穿后补）：给高危命令加这道门槛，
+      避免群里有人随手打四个字就把 bot 重启/更新掉。
+      ★★ 但它**防不住伪造的 C2C 私聊** —— webhook 对私聊恒置 at_me=True，
+      所以真正能挡住伪造事件的是事件验签（WEBHOOK_SIGNATURE），别搞错主次。
+    """
+    if getattr(ctx, "scene", "") != "group":
+        return True
+    return bool(getattr(getattr(ctx, "message", None), "at_me", False))
+
+
 def _extract_openid(message):
     """从消息对象中提取发送者的 openid（群聊 member_openid / 单聊 user_openid）。"""
     author = getattr(message, "author", None)

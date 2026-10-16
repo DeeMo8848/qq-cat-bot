@@ -27,7 +27,7 @@ import sys
 
 from config import ROOT, PYTHON, _cfg
 
-from bot.commands import register, ROLE_ASSISTANT
+from bot.commands import register, ROLE_ADMIN, ROLE_ASSISTANT, at_ok
 from bot.core import platform as _plat
 
 # 重启前留出的时间：够「正在重启」的消息送达 QQ
@@ -215,12 +215,14 @@ async def cmd_bot_status(ctx):
 # ---------------------------------------------------------------- 重启bot
 @register(
     keywords=["重启bot", "重启喵喵", "bot重启", "bot restart"],
-    help="重启 bot 服务（仅管理员/协助者）",
-    role=ROLE_ASSISTANT,
+    help="重启 bot 服务（仅管理员，群内需 @）",
+    role=ROLE_ADMIN,
     exact=True,
 )
 async def cmd_bot_restart(ctx):
     """重启服务：优先 systemctl，不可用时降级为进程自替换。"""
+    if not at_ok(ctx):
+        return  # 群里没 @ 就完全静默
     # 先探测 systemd 可用性，把「用什么方式重启」提前告诉用户
     if _plat.IS_LINUX and shutil.which("systemctl"):
         way = "systemd（systemctl restart %s）" % SYSTEMD_UNIT

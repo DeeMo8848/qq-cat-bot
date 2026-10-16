@@ -17,7 +17,8 @@ import time
 from aiohttp import web
 
 from config import (SECRET, WEBHOOK_PORT, BOT_ADMINS, BOT_ASSISTANTS, ROOT,
-                    WEBHOOK_BIND, WEBHOOK_SIGNATURE)
+                    WEBHOOK_BIND, WEBHOOK_SIGNATURE,
+                    WEBHOOK_UA_MODE, WEBHOOK_UA_ALLOW, WEBHOOK_SCENE_MODE)
 from bot import commands
 from bot.core import state
 from plugins.meme import is_meme as meme_is_meme
@@ -184,6 +185,9 @@ class WebhookServer:
         self._seen_msgs: dict[str, float] = {}
         # 事件签名校验统计（用于灰度期确认算法对不对：ok 涨说明官方回调能验过）
         self._sig_stat: dict[str, int] = {"ok": 0, "bad": 0}
+        # UA 白名单 / scene 判据 的统计（同为灰度用：先 log 跑一轮看会不会误伤官方）
+        self._ua_stat: dict[str, int] = {"ok": 0, "bad": 0}
+        self._scene_stat: dict[str, int] = {"ok": 0, "bad": 0}
 
     async def ping(self, request):
         return web.Response(text="webhook ok")
@@ -224,6 +228,38 @@ class WebhookServer:
                 )
             if not ok and WEBHOOK_SIGNATURE == "on":
                 return web.Response(status=401, text="bad signature")
+
+        if op == 0:
+            # --- UA 白名单（辅助层，见 config.py 说明）---
+            allow = [x.strip() for x in str(WEBHOOK_UA_ALLOW or "").split(",") if x.strip()]
+            if WEBHOOK_UA_MODE != "off" and allow:
+                ua = request.headers.get("User-Agent") or ""
+                ua_ok = any(a.lower() in ua.lower() for a in allow)
+                key = "ok" if ua_ok else "bad"
+                self._ua_stat[key] += 1
+                if not ua_ok:
+                    n = self._ua_stat["bad"]
+                    if n <= 5 or n % 50 == 0:
+                        _log.warning(
+                            "[webhook] UA 不在白名单 第%d次 (ok=%d bad=%d) mode=%s ua=%r ip=%s",
+                            n, self._ua_stat["ok"], n, WEBHOOK_UA_MODE, ua, request.remote,
+                        )
+                    if WEBHOOK_UA_MODE == "on":
+                        return web.Response(status=403, text="forbidden")
+            # --- scene 判据（辅助层，只对私聊生效：群聊事件的 scene 本来就可能是 None）---
+            if WEBHOOK_SCENE_MODE != "off" and str(payload.get("t") or "").upper().startswith("C2C"):
+                scene = (payload.get("d") or {}).get("scene")
+                s_key = "ok" if scene else "bad"
+                self._scene_stat[s_key] += 1
+                if not scene:
+                    n = self._scene_stat["bad"]
+                    if n <= 5 or n % 50 == 0:
+                        _log.warning(
+                            "[webhook] 私聊事件 scene 缺失 第%d次 (ok=%d bad=%d) mode=%s ip=%s",
+                            n, self._scene_stat["ok"], n, WEBHOOK_SCENE_MODE, request.remote,
+                        )
+                    if WEBHOOK_SCENE_MODE == "on":
+                        return web.Response(status=403, text="forbidden")
 
         if op == 13:  # 回调地址验证
             return await self._verify(payload)
