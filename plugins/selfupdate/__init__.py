@@ -37,7 +37,7 @@ import time
 
 from config import ROOT, PYTHON
 
-from bot.commands import register, ROLE_ADMIN, at_ok
+from bot.commands import register, ROLE_ADMIN, ROLE_ASSISTANT, at_ok
 from bot.core import platform as _plat
 
 # 重启延迟：留出时间让「更新完成」的消息送达 QQ
@@ -357,6 +357,7 @@ async def cmd_bot_update_force(ctx):
 @register(
     keywords=["bot版本", "喵喵版本", "版本"],
     help="查看当前运行版本与是否有更新（仅管理员/协助者）",
+    # 只读查询，不改动任何东西 ⇒ 保持 ASSISTANT，不跟着收紧到 ADMIN
     role=ROLE_ASSISTANT,
     exact=True,
 )
